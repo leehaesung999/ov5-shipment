@@ -1,0 +1,18 @@
+# 비밀키 (절대 커밋 금지)
+.streamlit/secrets.toml
+
+# 빌드/배포 산출물 (용량 큼 — Streamlit Cloud엔 불필요)
+dist/
+build/
+python/
+*.spec
+*.lnk
+*.zip
+
+# 런타임 임시/캐시/결과
+tmp_uploads/
+output/
+__pycache__/
+*.pyc
+_cache_*.xlsx
+*.bak.xlsx
