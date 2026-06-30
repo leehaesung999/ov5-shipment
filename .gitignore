@@ -24,3 +24,9 @@ _cache_*.xlsx
 
 # 워치리스트 데이터(공개 노출 방지 — 클라우드는 Supabase 사용)
 jaego/watchlist.json
+
+# 창고비교/재고분석 런타임 캐시·임시
+warehouse/_*.xlsx
+inventory/_tmp/
+inventory/data/물품담당자.xlsx
+inventory/data/backup/
