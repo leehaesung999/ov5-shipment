@@ -9,7 +9,7 @@ import streamlit as st
 st.set_page_config(page_title="사내 도구 통합", layout="wide")
 
 ov5 = st.Page(
-    "app_streamlit.py", title="OV5 / 농협 지정출고", icon="🟩",
+    "ov5_page.py", title="OV5 / 농협 지정출고", icon="🟩",
     url_path="ov5", default=True,
 )
 coupang = st.Page(
