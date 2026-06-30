@@ -9,6 +9,11 @@ python/
 *.lnk
 *.zip
 
+# 운영 데이터 (Supabase에 저장 — 공개 레포에 두지 않음)
+config/lot_assignments.xlsx
+config/lot_assignments_auto.xlsx
+config/settings.json
+
 # 런타임 임시/캐시/결과
 tmp_uploads/
 output/
@@ -16,3 +21,6 @@ __pycache__/
 *.pyc
 _cache_*.xlsx
 *.bak.xlsx
+
+# 워치리스트 데이터(공개 노출 방지 — 클라우드는 Supabase 사용)
+jaego/watchlist.json

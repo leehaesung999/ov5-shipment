@@ -19,6 +19,11 @@ coupang = st.Page(
     title="쿠팡 지정출고",
     icon="🟦",
 )
+jaego = st.Page(
+    "jaego/app.py",
+    title="유통기한 재고 모니터",
+    icon="📦",
+)
 
-nav = st.navigation([ov5, coupang])
+nav = st.navigation([ov5, coupang, jaego])
 nav.run()

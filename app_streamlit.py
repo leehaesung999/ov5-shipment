@@ -256,19 +256,18 @@ if _migrated:
     st.toast(f"🔁 기존 FS/MS 양식 {_migrated}건을 로트 지정으로 통합했습니다", icon="✅")
 
 # ===== 사이드바 =====
-with st.sidebar:
-    if store.use_supabase():
-        st.caption("🟢 공유 모드 · Supabase (여러 사용자 데이터 공유)")
-    else:
-        st.caption("💾 로컬 모드 · 이 PC/서버 파일 저장")
-    st.header("⚙️ 설정 / 기준정보")
-
+if store.use_supabase():
+    st.sidebar.caption("🟢 공유 모드 · Supabase (여러 사용자 데이터 공유)")
+else:
+    st.sidebar.caption("💾 로컬 모드 · 이 PC/서버 파일 저장")
+with st.sidebar.expander("⚙️ 설정 / 기준정보 — 클릭해서 열기", expanded=False):
     settings["threshold"] = st.number_input(
         "잔존율 기준 (전체 기본, fallback 용)",
         min_value=0.0, max_value=1.0, value=float(settings["threshold"]),
         step=0.05, format="%.2f")
 
-    with st.expander("📐 카테고리별 잔존율 기준 (농협은 항상 무관)", expanded=True):
+    st.markdown("**📐 카테고리별 잔존율 기준** (농협은 항상 무관)")
+    with st.container():
         prev_thr = dict(settings.get("thresholds") or {})
         prev_ignore = set(settings.get("thresholds_ignore") or [])
         thr = dict(prev_thr)
