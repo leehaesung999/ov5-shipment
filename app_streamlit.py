@@ -243,7 +243,10 @@ def style_match_result(df: pd.DataFrame):
 
 
 # ---------------- main UI ----------------
-st.set_page_config(page_title="OV5 지정출고 자동매칭", layout="wide")
+try:  # 단독 실행 시에만 적용 (통합 Home.py에서 실행되면 이미 설정됨 → 무시)
+    st.set_page_config(page_title="OV5 지정출고 자동매칭", layout="wide")
+except Exception:
+    pass
 st.title("OV5 지정출고 자동매칭")
 st.caption("재고 파일 업로드 → 현황 확인 → 주문 파일 업로드 → 매칭 결과 → 다운로드")
 

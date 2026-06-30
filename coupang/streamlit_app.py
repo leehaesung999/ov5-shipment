@@ -51,7 +51,10 @@ def cached_analyze(inv_bytes: bytes, out_bytes: bytes, target_sig: tuple, _mmtim
     return core.analyze(str(ip), str(op), targets=targets)
 
 
-st.set_page_config(page_title="쿠팡 지정출고 자동매칭", layout="wide")
+try:  # 단독 실행 시에만 적용 (통합 Home.py에서 실행되면 이미 설정됨 → 무시)
+    st.set_page_config(page_title="쿠팡 지정출고 자동매칭", layout="wide")
+except Exception:
+    pass
 st.title("쿠팡 지정출고 자동매칭")
 st.caption("재고 업로드 → 출고진행 업로드 → 매칭 결과 + 거래처 수정 → 엑셀 다운로드")
 
