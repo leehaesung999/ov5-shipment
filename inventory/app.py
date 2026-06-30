@@ -36,6 +36,55 @@ def _save(upload, name) -> str:
     return str(p)
 
 
+# ---------- 담당자(개인정보) — 공개 레포 대신 Supabase(비공개)에서 ----------
+try:
+    _SB_OK = bool(st.secrets.get("SUPABASE_URL")) and bool(st.secrets.get("SUPABASE_KEY"))
+except Exception:
+    _SB_OK = False
+
+
+@st.cache_resource(show_spinner=False)
+def _sb():
+    from supabase import create_client
+    return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+
+
+def _fetch_담당자() -> dict:
+    if not _SB_OK:
+        return {}
+    try:
+        r = _sb().table("app_settings").select("value").eq("key", "inventory_담당자").execute()
+        return (r.data[0].get("value") or {}) if r.data else {}
+    except Exception:
+        return {}
+
+
+def _setup_담당자(up_file) -> tuple:
+    """담당자 매핑을 core.담당자_PATH 에 준비. 우선순위: 세션 업로드 > Supabase."""
+    import openpyxl
+    src = "업로드" if up_file else ("Supabase" if _SB_OK else None)
+    if up_file:
+        p = TMP / "물품담당자.xlsx"
+        p.write_bytes(up_file.getvalue())
+        core.담당자_PATH = p
+        try:
+            return src, len(core.load_담당자(str(p)))
+        except Exception:
+            return src, 0
+    m = _fetch_담당자()
+    if m:
+        wb = openpyxl.Workbook()
+        ws = wb.active
+        ws.append(["코드", "담당자"])
+        for c, n in m.items():
+            ws.append([c, n])
+        p = TMP / "물품담당자.xlsx"
+        wb.save(str(p))
+        core.담당자_PATH = p
+        return src, len(m)
+    return None, 0
+
+
 # ---------- 사이드바: 기준정보 (접기) ----------
 with st.sidebar.expander("⚙️ 기준정보 / 옵션 — 클릭해서 열기", expanded=False):
     if DEFAULT_MASTER.exists():
@@ -45,6 +94,15 @@ with st.sidebar.expander("⚙️ 기준정보 / 옵션 — 클릭해서 열기",
     up_master = st.file_uploader("기준정보 xlsx 업로드(갱신)", type=["xlsx"], key="inv_master")
     master_path = _save(up_master, "_master.xlsx") if up_master else (
         str(DEFAULT_MASTER) if DEFAULT_MASTER.exists() else None)
+    st.divider()
+    st.caption("물품담당자(개인정보) — 유통기한 분석의 '공유여부' 자동채움용. 공개 레포 대신 Supabase 저장.")
+    up_dam = st.file_uploader("물품담당자 xlsx 업로드(갱신)", type=["xlsx"], key="inv_dam")
+    _dam_src, _dam_n = _setup_담당자(up_dam)
+    if _dam_n:
+        st.success(f"담당자 {_dam_n}명 적용 ({_dam_src})")
+    else:
+        st.warning("담당자 미적용 — 공유여부 자동채움 생략")
+    st.divider()
     threshold = st.slider("유통기한 분석 잔존율 기준", 0.0, 1.0, 0.5, 0.05)
     today = st.date_input("기준일자", value=date.today())
 
@@ -102,4 +160,4 @@ if st.button(f"▶ {choice} 실행", type="primary", use_container_width=True):
     else:
         st.warning("결과 파일이 생성되지 않았습니다. 로그를 확인하세요.")
 
-st.caption("ⓘ 담당자(공유여부 자동채움)는 개인정보라 웹엔 미포함 — 필요 시 사이드바 추가 없이 로컬판 사용")
+st.caption("ⓘ 담당자(공유여부 자동채움)는 Supabase(비공개)에 저장 — 결과 파일에 반영됩니다. 사이드바에서 갱신 가능.")
