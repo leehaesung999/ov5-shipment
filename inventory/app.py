@@ -14,7 +14,7 @@ import streamlit as st
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
-import core  # noqa: E402
+import inv_core as core  # noqa: E402  (OV5의 core 패키지와 이름 충돌 방지)
 
 DATA = HERE / "data"
 DEFAULT_MASTER = DATA / "기준정보.xlsx"
@@ -117,18 +117,21 @@ if not master_path:
     st.error("기준정보가 없습니다. 사이드바에서 업로드하세요.")
     st.stop()
 
-st.subheader("② 분석 선택 → 실행")
-ACTIONS = {
-    "이중적치 분석 (보충오류 점검)": ("analyze_and_save", "이중적치"),
-    "재고지 — 1단 전체": ("edit_재고지_1단_전체", "재고지_1단전체"),
-    "재고지 — 2~6단": ("edit_재고지_2_6단", "재고지_2_6단"),
-    "유통기한 분석 — OV5 (잔존율 ≤ 기준)": ("analyze_ov5_expiry", "OV5유통기한"),
-    "유통기한 분석 — OV6 (잔존율 ≤ 기준)": ("analyze_ov6_expiry", "OV6유통기한"),
-}
-choice = st.selectbox("분석 항목", list(ACTIONS.keys()))
-fn_name, out_tag = ACTIONS[choice]
+st.subheader("② 분석 실행 — 원하는 기능 버튼 클릭 (각각 독립 실행)")
+ACTIONS = [
+    ("🔀 이중적치 분석 (보충오류 점검)", "analyze_and_save", "이중적치"),
+    ("📋 재고지 — 1단 전체", "edit_재고지_1단_전체", "재고지_1단전체"),
+    ("📋 재고지 — 2~6단", "edit_재고지_2_6단", "재고지_2_6단"),
+    ("⏳ 유통기한 분석 — OV5 (잔존율 ≤ 기준)", "analyze_ov5_expiry", "OV5유통기한"),
+    ("⏳ 유통기한 분석 — OV6 (잔존율 ≤ 기준)", "analyze_ov6_expiry", "OV6유통기한"),
+]
+MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
-if st.button(f"▶ {choice} 실행", type="primary", use_container_width=True):
+if "inv_results" not in st.session_state:
+    st.session_state.inv_results = {}
+
+
+def run_action(fn_name, out_tag):
     logs: list[str] = []
 
     def log(*a):
@@ -136,28 +139,38 @@ if st.button(f"▶ {choice} 실행", type="primary", use_container_width=True):
 
     out_path = TMP / f"{out_tag}_{date.today():%Y%m%d}.xlsx"
     fn = getattr(core, fn_name)
-    with st.spinner("분석 중..."):
-        try:
-            if fn_name.endswith("_expiry"):
-                fn(stock_path, master_path, str(out_path),
-                   threshold=float(threshold), today=today, log=log)
-            else:
-                fn(stock_path, master_path, str(out_path), log=log)
-        except Exception as e:
-            st.error(f"오류: {e}")
-            with st.expander("로그"):
-                st.code("\n".join(logs) or str(e))
-            st.stop()
-    if logs:
-        with st.expander("처리 로그", expanded=False):
-            st.code("\n".join(logs))
-    if out_path.exists():
-        data = out_path.read_bytes()
-        st.success(f"완료: {out_path.name} ({len(data)/1024:.0f} KB)")
-        st.download_button("📥 결과 다운로드", data, out_path.name,
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           use_container_width=True)
-    else:
-        st.warning("결과 파일이 생성되지 않았습니다. 로그를 확인하세요.")
+    try:
+        if fn_name.endswith("_expiry"):
+            fn(stock_path, master_path, str(out_path),
+               threshold=float(threshold), today=today, log=log)
+        else:
+            fn(stock_path, master_path, str(out_path), log=log)
+    except Exception as e:
+        return {"error": str(e), "logs": logs}
+    if not out_path.exists():
+        return {"error": "결과 파일이 생성되지 않았습니다.", "logs": logs}
+    return {"data": out_path.read_bytes(), "name": out_path.name, "logs": logs}
 
-st.caption("ⓘ 담당자(공유여부 자동채움)는 Supabase(비공개)에 저장 — 결과 파일에 반영됩니다. 사이드바에서 갱신 가능.")
+
+for label, fn_name, out_tag in ACTIONS:
+    c1, c2 = st.columns([3, 2])
+    with c1:
+        if st.button(f"▶ {label}", key=f"btn_{fn_name}", use_container_width=True):
+            with st.spinner(f"{label} 실행 중..."):
+                st.session_state.inv_results[fn_name] = run_action(fn_name, out_tag)
+    with c2:
+        res = st.session_state.inv_results.get(fn_name)
+        if res:
+            if res.get("error"):
+                st.error(res["error"])
+            else:
+                st.download_button(
+                    f"📥 {res['name']} 다운로드", res["data"], res["name"],
+                    mime=MIME, key=f"dl_{fn_name}", use_container_width=True)
+    if res := st.session_state.inv_results.get(fn_name):
+        if res.get("logs"):
+            with st.expander(f"{label} 로그", expanded=False):
+                st.code("\n".join(res["logs"]) or "(로그 없음)")
+
+st.caption("ⓘ 각 버튼은 독립 실행 — 원하는 것만 눌러 결과를 받으세요. "
+           "담당자(공유여부 자동채움)는 Supabase(비공개)에 저장돼 결과에 반영됩니다.")
