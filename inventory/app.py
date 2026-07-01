@@ -226,6 +226,8 @@ def run_action(key, out_tag):
 
     op = TMP / f"{out_tag}_{date.today():%Y%m%d}.xlsx"
     thr = float(threshold)
+    # 유통기한 함수는 내부에서 datetime과 빼기 → date를 datetime으로 변환
+    _today = datetime.combine(today, datetime.min.time()) if isinstance(today, date) else today
     diff_qty = None
     try:
         if up_daily:
@@ -249,13 +251,13 @@ def run_action(key, out_tag):
             core.edit_재고지_2_6단(stock_path, master_path, str(op), log=log)
         elif key == "ov5":
             core.analyze_ov5_expiry(stock_path, master_path, str(op),
-                                    threshold=thr, today=today, log=log)
+                                    threshold=thr, today=_today, log=log)
         elif key == "ov6":
             core.analyze_ov6_expiry(stock_path, master_path, str(op),
-                                    threshold=thr, today=today, log=log)
+                                    threshold=thr, today=_today, log=log)
         elif key == "nonlock":
             core.analyze_nonlock_expiry(stock_path, master_path, str(op),
-                                        threshold=thr, today=today, log=log)
+                                        threshold=thr, today=_today, log=log)
     except Exception as e:
         return {"error": str(e), "logs": logs}
     if not op.exists():
