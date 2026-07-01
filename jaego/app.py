@@ -11,11 +11,23 @@ import re
 from pathlib import Path
 
 # ─── Supabase 감지 ─────────────────────────────────────────────────────────
-def _supabase_configured() -> bool:
+# 우선순위: JAEGO_SUPABASE_* (재고모니터 전용/기존 프로젝트) > SUPABASE_* (통합 공용)
+def _sb_url():
     try:
-        return bool(st.secrets.get("SUPABASE_URL")) and bool(st.secrets.get("SUPABASE_KEY"))
+        return st.secrets.get("JAEGO_SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
     except Exception:
-        return False
+        return None
+
+
+def _sb_key():
+    try:
+        return st.secrets.get("JAEGO_SUPABASE_KEY") or st.secrets.get("SUPABASE_KEY")
+    except Exception:
+        return None
+
+
+def _supabase_configured() -> bool:
+    return bool(_sb_url()) and bool(_sb_key())
 
 USE_SUPABASE = _supabase_configured()
 
@@ -24,7 +36,7 @@ if USE_SUPABASE:
 
     @st.cache_resource
     def _sb():
-        return create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+        return create_client(_sb_url(), _sb_key())
 
 # ─── 컬럼 인덱스 ──────────────────────────────────────────────────────────
 COL_품목코드 = 4
@@ -180,8 +192,10 @@ if USE_SUPABASE:
     load_watchlist()  # 플래그 세팅용
     if WATCHLIST_TABLE_MISSING:
         st.warning(
-            "⚠ 공유용 `watchlist` 테이블이 아직 없습니다. Supabase SQL Editor에서 "
-            "아래를 1회 실행하면 워치리스트가 공유·저장됩니다.\n\n"
+            "⚠ `watchlist` 테이블이 없습니다. 방법 2가지:\n\n"
+            "**A) 기존 재고모니터 데이터 그대로 쓰기** — 앱 Secrets에 기존 재고모니터 "
+            "Supabase 값을 `JAEGO_SUPABASE_URL` / `JAEGO_SUPABASE_KEY` 로 추가 (이관 불필요)\n\n"
+            "**B) 이 통합 Supabase에 새로 만들기** — SQL Editor에서 1회 실행:\n"
             "```sql\ncreate table watchlist (\n  id serial primary key,\n"
             "  code varchar(50) not null,\n  expiry varchar(8) not null,\n"
             "  unique(code, expiry)\n);\n```")
