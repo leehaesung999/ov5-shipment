@@ -105,6 +105,10 @@ with st.sidebar.expander("⚙️ 기준정보 / 옵션 — 클릭해서 열기",
     st.divider()
     threshold = st.slider("유통기한 분석 잔존율 기준", 0.0, 1.0, 0.5, 0.05)
     today = st.date_input("기준일자", value=date.today())
+    st.divider()
+    st.caption("실사지 보조 입력 (선택)")
+    up_daily = st.file_uploader("일일입력 xlsx (차이수량 반영)", type=["xlsx"], key="inv_daily")
+    up_prod = st.file_uploader("제품별리스트 xlsx (토요일 실사지용)", type=["xlsx"], key="inv_prod")
 
 # ---------- 입력 ----------
 st.subheader("① ERP 재고조회 파일 업로드")
@@ -118,59 +122,91 @@ if not master_path:
     st.stop()
 
 st.subheader("② 분석 실행 — 원하는 기능 버튼 클릭 (각각 독립 실행)")
-ACTIONS = [
-    ("🔀 이중적치 분석 (보충오류 점검)", "analyze_and_save", "이중적치"),
-    ("📋 재고지 — 1단 전체", "edit_재고지_1단_전체", "재고지_1단전체"),
-    ("📋 재고지 — 2~6단", "edit_재고지_2_6단", "재고지_2_6단"),
-    ("⏳ 유통기한 분석 — OV5 (잔존율 ≤ 기준)", "analyze_ov5_expiry", "OV5유통기한"),
-    ("⏳ 유통기한 분석 — OV6 (잔존율 ≤ 기준)", "analyze_ov6_expiry", "OV6유통기한"),
-]
 MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+LOC_LIST = str(DATA / "지정로케이션.xlsx")
+
+# (버튼라벨, 설명 hint, key, 결과파일 태그)
+ACTIONS = [
+    ("🔀 이중적치 분석", "같은 로케이션에 잔량 혼재 검출 (Lock·OV·정파렛트 제외)", "이중적치", "이중적치"),
+    ("📋 일일 재고실사지", "지정 로케이션 일일 실사지 · 일일입력 있으면 차이수량 반영(대시보드 다운)", "일일실사", "일일재고실사지"),
+    ("📋 1단 재고실사지", "1단 전체 로케이션 실사지", "1단전체", "1단재고실사지"),
+    ("📅 토요일 실사지 (쿠팡 출고)", "출하Inv=IC930 품목만 · 제품별리스트 업로드 필요(출하체크·대시보드 다운)", "토요일", "토요일실사지"),
+    ("📋 재고지 (2~6단)", "고단(2-6단) 재고지", "2_6단", "재고지_2_6단"),
+    ("⏳ OV5 하프도달 점검", "OV5 재고 중 잔존율 ≤ 기준(50%) 유통기한 임박", "ov5", "OV5유통기한"),
+    ("⏳ OV6 하프도달 점검", "OV6 재고 중 잔존율 ≤ 기준(50%) 유통기한 임박", "ov6", "OV6유통기한"),
+    ("⏳ 비Lock 유통기한 점검", "Lock 무관 전체 재고 중 잔존율 ≤ 기준 임박", "nonlock", "비Lock유통기한"),
+]
 
 if "inv_results" not in st.session_state:
     st.session_state.inv_results = {}
 
 
-def run_action(fn_name, out_tag):
+def run_action(key, out_tag):
     logs: list[str] = []
 
     def log(*a):
         logs.append(" ".join(str(x) for x in a))
 
-    out_path = TMP / f"{out_tag}_{date.today():%Y%m%d}.xlsx"
-    fn = getattr(core, fn_name)
+    op = TMP / f"{out_tag}_{date.today():%Y%m%d}.xlsx"
+    thr = float(threshold)
+    diff_qty = None
     try:
-        if fn_name.endswith("_expiry"):
-            fn(stock_path, master_path, str(out_path),
-               threshold=float(threshold), today=today, log=log)
-        else:
-            fn(stock_path, master_path, str(out_path), log=log)
+        if up_daily:
+            diff_qty = core.load_차이수량_from_일일입력(_save(up_daily, "_daily.xlsx"))
+            log(f"일일입력 차이수량 {len(diff_qty):,}건 반영")
+        if key == "이중적치":
+            core.analyze_and_save(stock_path, master_path, str(op), log=log)
+        elif key == "일일실사":
+            core.edit_재고지_1단(stock_path, master_path, LOC_LIST, str(op),
+                                 diff_qty=diff_qty, log=log)
+        elif key == "1단전체":
+            core.edit_재고지_1단_전체(stock_path, master_path, str(op), log=log)
+        elif key == "토요일":
+            if not up_prod:
+                return {"error": "제품별리스트 파일을 사이드바에서 업로드하세요.", "logs": logs}
+            code_set = core.load_품목코드_from_제품별리스트(_save(up_prod, "_prod.xlsx"))
+            log(f"출하 대상 품목 {len(code_set):,}건")
+            core.edit_재고지_1단(stock_path, master_path, LOC_LIST, str(op),
+                                 code_filter=code_set, diff_qty=diff_qty, log=log)
+        elif key == "2_6단":
+            core.edit_재고지_2_6단(stock_path, master_path, str(op), log=log)
+        elif key == "ov5":
+            core.analyze_ov5_expiry(stock_path, master_path, str(op),
+                                    threshold=thr, today=today, log=log)
+        elif key == "ov6":
+            core.analyze_ov6_expiry(stock_path, master_path, str(op),
+                                    threshold=thr, today=today, log=log)
+        elif key == "nonlock":
+            core.analyze_nonlock_expiry(stock_path, master_path, str(op),
+                                        threshold=thr, today=today, log=log)
     except Exception as e:
         return {"error": str(e), "logs": logs}
-    if not out_path.exists():
+    if not op.exists():
         return {"error": "결과 파일이 생성되지 않았습니다.", "logs": logs}
-    return {"data": out_path.read_bytes(), "name": out_path.name, "logs": logs}
+    return {"data": op.read_bytes(), "name": op.name, "logs": logs}
 
 
-for label, fn_name, out_tag in ACTIONS:
+for label, hint, key, out_tag in ACTIONS:
     c1, c2 = st.columns([3, 2])
     with c1:
-        if st.button(f"▶ {label}", key=f"btn_{fn_name}", use_container_width=True):
-            with st.spinner(f"{label} 실행 중..."):
-                st.session_state.inv_results[fn_name] = run_action(fn_name, out_tag)
+        clicked = st.button(f"▶ {label}", key=f"btn_{key}", use_container_width=True)
+        st.caption(hint)
     with c2:
-        res = st.session_state.inv_results.get(fn_name)
+        if clicked:
+            with st.spinner(f"{label} 실행 중..."):
+                st.session_state.inv_results[key] = run_action(key, out_tag)
+        res = st.session_state.inv_results.get(key)
         if res:
             if res.get("error"):
                 st.error(res["error"])
             else:
                 st.download_button(
-                    f"📥 {res['name']} 다운로드", res["data"], res["name"],
-                    mime=MIME, key=f"dl_{fn_name}", use_container_width=True)
-    if res := st.session_state.inv_results.get(fn_name):
-        if res.get("logs"):
-            with st.expander(f"{label} 로그", expanded=False):
-                st.code("\n".join(res["logs"]) or "(로그 없음)")
+                    f"📥 {res['name']}", res["data"], res["name"],
+                    mime=MIME, key=f"dl_{key}", use_container_width=True)
+    res = st.session_state.inv_results.get(key)
+    if res and res.get("logs"):
+        with st.expander(f"{label} 로그", expanded=False):
+            st.code("\n".join(res["logs"]) or "(로그 없음)")
 
 st.caption("ⓘ 각 버튼은 독립 실행 — 원하는 것만 눌러 결과를 받으세요. "
            "담당자(공유여부 자동채움)는 Supabase(비공개)에 저장돼 결과에 반영됩니다.")
