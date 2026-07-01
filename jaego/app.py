@@ -258,25 +258,41 @@ if uploaded:
     if not wl:
         st.warning("⚠️ 등록된 품목이 없습니다. 위 '품목 등록/삭제 열기'를 체크하여 품목을 등록해주세요.")
     else:
+        df = pd.read_excel(uploaded, dtype=str, header=0)
+        # ── 창고 선택: 전체창고 파일도 창고별로 분리 (섞이지 않음) ──
+        _whs_all = sorted({str(v).strip() for v in df.iloc[:, 0].dropna()
+                           if str(v).strip()})
+        # 기본 체크: IC930·IC920·IC906 (파일에 있는 것만)
+        _default = [w for w in ("IC930", "IC920", "IC906") if w in _whs_all] or _whs_all
+        if len(_whs_all) > 1:
+            sel_whs = st.multiselect(
+                "🏬 창고 선택 (창고별로 분리 표시 — 보고 싶은 창고만 체크, 섞이지 않음)",
+                _whs_all, default=_default)
+        else:
+            sel_whs = _whs_all
+        if not sel_whs:
+            sel_whs = _whs_all
         with st.spinner("분석 중..."):
-            df   = pd.read_excel(uploaded, dtype=str, header=0)
             rows = []
-            for item in wl:
-                품목명, status, color, note, 출고중 = analyze_item(
-                    df, str(item["code"]), str(item["expiry"])
-                )
-                rows.append(
-                    {
-                        "품목코드":         str(item["code"]),
-                        "품목명":           품목명,
-                        "등록 유통기한":     str(item["expiry"]),
-                        "출고진행 유통기한":  ", ".join(출고중) if 출고중 else "-",
-                        "최신 출고 유통기한": max(출고중) if 출고중 else "-",
-                        "상태":            status,
-                        "비고":            note,
-                        "_color":          color,
-                    }
-                )
+            for wh in sel_whs:
+                df_wh = df[df.iloc[:, 0].astype(str).str.strip() == wh]
+                for item in wl:
+                    품목명, status, color, note, 출고중 = analyze_item(
+                        df_wh, str(item["code"]), str(item["expiry"])
+                    )
+                    rows.append(
+                        {
+                            "창고":            wh,
+                            "품목코드":         str(item["code"]),
+                            "품목명":           품목명,
+                            "등록 유통기한":     str(item["expiry"]),
+                            "출고진행 유통기한":  ", ".join(출고중) if 출고중 else "-",
+                            "최신 출고 유통기한": max(출고중) if 출고중 else "-",
+                            "상태":            status,
+                            "비고":            note,
+                            "_color":          color,
+                        }
+                    )
 
         result_df  = pd.DataFrame(rows)
         display_df = result_df.drop(columns=["_color"])
