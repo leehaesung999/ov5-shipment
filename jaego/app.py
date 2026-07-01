@@ -280,6 +280,8 @@ if uploaded:
                     품목명, status, color, note, 출고중 = analyze_item(
                         df_wh, str(item["code"]), str(item["expiry"])
                     )
+                    if status == "미발견":
+                        continue  # 그 창고 파일에 품목/유통기한 없으면 제외
                     rows.append(
                         {
                             "창고":            wh,
@@ -294,30 +296,40 @@ if uploaded:
                         }
                     )
 
-        result_df  = pd.DataFrame(rows)
-        display_df = result_df.drop(columns=["_color"])
+        result_df = pd.DataFrame(rows)
+        if result_df.empty:
+            st.info("선택한 창고에서 등록 품목을 찾지 못했습니다. 창고 체크를 확인하세요.")
+            st.stop()
         BG = {"red": "#FFCCCC", "orange": "#FFE0B2", "": "#FFFFFF"}
 
-        def row_style(row):
-            bg = BG.get(result_df.at[row.name, "_color"], "#FFFFFF")
-            return [f"background-color: {bg}"] * len(row)
-
-        styled = display_df.style.apply(row_style, axis=1).map(
-            lambda _: "font-weight: bold", subset=["등록 유통기한"]
-        )
-
-        # 요약 카운트
-        cnt_red    = (result_df["_color"] == "red").sum()
-        cnt_orange = (result_df["_color"] == "orange").sum()
-        cnt_ok     = (result_df["_color"] == "").sum()
-
+        # 전체 요약
         c1, c2, c3 = st.columns(3)
-        c1.metric("🔴 위험", cnt_red,    help="이후 유통기한 출고진행 중")
-        c2.metric("🟠 주의", cnt_orange, help="동일/직전 유통기한 출고진행 중")
-        c3.metric("✅ 정상", cnt_ok,     help="락 없는 동일 유통기한 재고 있음")
+        c1.metric("🔴 위험", int((result_df["_color"] == "red").sum()),
+                  help="이후 유통기한 출고진행 중")
+        c2.metric("🟠 주의", int((result_df["_color"] == "orange").sum()),
+                  help="동일/직전 유통기한 출고진행 중")
+        c3.metric("✅ 정상", int((result_df["_color"] == "").sum()),
+                  help="락 없는 동일 유통기한 재고 있음")
 
-        st.subheader("📊 분석 결과")
-        st.dataframe(styled, use_container_width=True, height=min(600, 60 + len(rows) * 38))
+        st.subheader("📊 분석 결과 (창고별)")
+        for wh in sel_whs:
+            wh_df = result_df[result_df["창고"] == wh].reset_index(drop=True)
+            if wh_df.empty:
+                continue
+            _r = int((wh_df["_color"] == "red").sum())
+            _o = int((wh_df["_color"] == "orange").sum())
+            _k = int((wh_df["_color"] == "").sum())
+            st.markdown(f"#### 🏬 {wh}  —  🔴 위험 {_r} · 🟠 주의 {_o} · ✅ 정상 {_k}")
+            disp = wh_df.drop(columns=["_color", "창고"])
+            _colors = wh_df["_color"].tolist()
+
+            def _row_style(row, colors=_colors):
+                return [f"background-color: {BG.get(colors[row.name], '#FFFFFF')}"] * len(row)
+
+            styled = disp.style.apply(_row_style, axis=1).map(
+                lambda _: "font-weight: bold", subset=["등록 유통기한"])
+            st.dataframe(styled, use_container_width=True,
+                         height=min(500, 60 + len(wh_df) * 38))
 
         st.markdown("""
 ---
