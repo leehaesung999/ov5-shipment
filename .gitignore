@@ -30,3 +30,6 @@ warehouse/_*.xlsx
 inventory/_tmp/
 inventory/data/물품담당자.xlsx
 inventory/data/backup/
+
+# LOCK 변환기 런타임 임시
+lock/_tmp/

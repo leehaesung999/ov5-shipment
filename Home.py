@@ -28,8 +28,12 @@ inventory = st.Page(
     "inventory/app.py", title="통합센터 재고 분석기", icon="🏭",
     url_path="inventory",
 )
+lock = st.Page(
+    "lock/app.py", title="LOCK 변환기", icon="🔒",
+    url_path="lock",
+)
 
-nav = st.navigation([ov5, coupang, jaego, warehouse, inventory])
+nav = st.navigation([ov5, coupang, jaego, warehouse, inventory, lock])
 
 # 외부 앱(일일재고 — PythonAnywhere)으로 이동 링크
 st.sidebar.divider()
