@@ -185,8 +185,15 @@ st.subheader("① ERP 재고조회 파일 업로드")
 stock_up = st.file_uploader("로케이션별 재고조회 xlsx", type=["xlsx", "xls"], key="inv_stock")
 if not stock_up:
     st.info("재고조회 파일을 업로드하세요.")
+    st.session_state.pop("inv_results", None)  # 파일 없으면 이전 결과 제거
+    st.session_state.pop("inv_stock_sig", None)
     st.stop()
 stock_path = _save(stock_up, "_stock.xlsx")
+# 재고파일이 바뀌면(삭제 후 재업로드 포함) 이전 분석 다운로드 버튼 초기화 — 혼동 방지
+_stock_sig = f"{stock_up.name}|{stock_up.size}"
+if st.session_state.get("inv_stock_sig") != _stock_sig:
+    st.session_state.inv_results = {}
+    st.session_state.inv_stock_sig = _stock_sig
 if not master_path:
     st.error("기준정보가 없습니다. 사이드바에서 업로드하세요.")
     st.stop()
@@ -273,10 +280,6 @@ for label, hint, key, out_tag in ACTIONS:
                 st.download_button(
                     f"📥 {res['name']}", res["data"], res["name"],
                     mime=MIME, key=f"dl_{key}", use_container_width=True)
-    res = st.session_state.inv_results.get(key)
-    if res and res.get("logs"):
-        with st.expander(f"{label} 로그", expanded=False):
-            st.code("\n".join(res["logs"]) or "(로그 없음)")
 
 st.caption("ⓘ 각 버튼은 독립 실행 — 원하는 것만 눌러 결과를 받으세요. "
            "담당자(공유여부 자동채움)는 Supabase(비공개)에 저장돼 결과에 반영됩니다.")

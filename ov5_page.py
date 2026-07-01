@@ -26,6 +26,7 @@ from core.master_loader import (
     load_shelf_life_months, load_fs_ms_items, load_lot_assignments,
 )
 from core import store
+import cloud_master  # noqa: E402
 
 
 def migrate_fs_ms_to_lot() -> int:
@@ -315,11 +316,13 @@ with st.sidebar.expander("⚙️ 설정 / 기준정보 — 클릭해서 열기",
 
     st.divider()
     st.subheader("📚 기준정보 (유통기한월)")
+    cloud_master.restore_to("ov5", MASTER_CACHE)  # 클라우드 저장본 복원
     if MASTER_CACHE.exists():
         n = len(cached_shelf_map(_master_mtime()))
         st.success(f"등록 {n}품목")
     else:
         st.warning("등록 안 됨 (24개월 기본값)")
+    cloud_master.show_date("ov5", str(MASTER_CACHE) if MASTER_CACHE.exists() else None)
     up = st.file_uploader("기준정보 xlsx 업로드", type=["xlsx"], key="master_up",
                             help="새 양식: 소비기한(월) 컬럼, AF=상세 / 하대 없음 — "
                                  "업로드 시 자동으로 컬럼 정규화 + 하대=배면×배단 생성")
@@ -355,6 +358,7 @@ with st.sidebar.expander("⚙️ 설정 / 기준정보 — 클릭해서 열기",
                         ng_msg = " · (배면/배단 없어 하대 미생성)"
                 CONFIG_DIR.mkdir(exist_ok=True)
                 df.to_excel(str(MASTER_CACHE), index=False, sheet_name="기준정보")
+                cloud_master.store("ov5", MASTER_CACHE.read_bytes(), len(df))
                 st.success(f"✅ 기준정보 {len(df)}품목 등록 완료{ng_msg}. "
                             "새로고침하세요.")
         except Exception as e:

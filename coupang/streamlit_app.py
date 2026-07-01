@@ -21,8 +21,10 @@ import streamlit as st
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))  # 레포 루트 (cloud_master)
 import 지정출고_자동매칭 as core  # noqa: E402
 import cloud_store  # noqa: E402
+import cloud_master  # noqa: E402
 
 TMP = HERE / "tmp_uploads"
 TMP.mkdir(exist_ok=True)
@@ -67,11 +69,14 @@ else:
 with st.sidebar.expander("⚙️ 마스터 / 대상품목 — 클릭해서 열기", expanded=False):
     # ----- 마스터 정보 (하대·팔레트) -----
     st.header("📚 마스터 정보")
+    cloud_master.restore_to("coupang", core.MASTER_ITEM_CACHE)  # 클라우드 저장본 복원
     n_master = cached_master_count(_master_mtime())
     if n_master:
         st.success(f"하대 마스터: **{n_master}품목** 캐시됨")
     else:
         st.warning("하대 마스터 미등록 (Item_*.xlsx 업로드)")
+    cloud_master.show_date("coupang",
+                           core.MASTER_ITEM_CACHE if os.path.isfile(core.MASTER_ITEM_CACHE) else None)
     up_master = st.file_uploader(
         "Item_*.xlsx 업로드로 갱신",
         type=["xlsx"], key="master_up",
@@ -81,6 +86,8 @@ with st.sidebar.expander("⚙️ 마스터 / 대상품목 — 클릭해서 열�
         tmp.write_bytes(up_master.getvalue())
         ok, n = core.update_master_cache(str(tmp))
         if ok:
+            with open(core.MASTER_ITEM_CACHE, "rb") as _f:
+                cloud_master.store("coupang", _f.read(), n)
             st.success(f"마스터 갱신 완료: {n}품목 — 새로고침하세요")
         else:
             st.error("갱신 실패")

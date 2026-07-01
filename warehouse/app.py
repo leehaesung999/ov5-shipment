@@ -16,7 +16,9 @@ import streamlit as st
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))  # 레포 루트 (cloud_master)
 import compare_core as cc  # noqa: E402
+import cloud_master  # noqa: E402
 
 DEFAULT_MASTER = HERE / "default_master.xlsx"
 
@@ -65,8 +67,21 @@ with st.sidebar.expander("⚙️ 설정 / 물품정보 — 클릭해서 열기",
     st.divider()
     st.caption("물품정보(소비기한월) — 잔존% 계산용. 미업로드 시 기본 마스터 사용.")
     up_master = st.file_uploader("물품정보 xlsx 업로드 (Item_*.xlsx)", type=["xlsx"], key="wh_master")
-    master = _master(up_master.getvalue() if up_master else None)
-    st.success(f"물품정보: {len(master)}품목") if master else st.warning("물품정보 없음 (잔존% 생략)")
+    _mbytes = None
+    if up_master:
+        _mbytes = up_master.getvalue()
+    else:
+        _wmeta = cloud_master.fetch_meta("warehouse")
+        if _wmeta:
+            _mbytes = cloud_master._fetch_bytes("warehouse", str(_wmeta.get("updated", "")))
+    master = _master(_mbytes)
+    if up_master and master:
+        cloud_master.store("warehouse", _mbytes, len(master))
+    if master:
+        st.success(f"물품정보: {len(master)}품목")
+    else:
+        st.warning("물품정보 없음 (잔존% 생략)")
+    cloud_master.show_date("warehouse", str(DEFAULT_MASTER))
     # 양식 다운로드
     tmpl = pd.DataFrame({"Item code": [1010422, 2032260], "소비기한(월)": [24, 12]})
     buf = io.BytesIO(); tmpl.to_excel(buf, index=False)
