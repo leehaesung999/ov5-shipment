@@ -6,9 +6,44 @@
 
 import streamlit as st
 import pandas as pd
+import io
 import json
 import re
+from datetime import date
 from pathlib import Path
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
+from openpyxl.utils import get_column_letter
+
+
+_XLSX_COLS = ["창고", "품목코드", "품목명", "등록 유통기한",
+              "출고진행 유통기한", "최신 출고 유통기한", "상태", "비고"]
+_XLSX_FILL = {"red": "FFCCCC", "orange": "FFE0B2", "": "FFFFFF"}
+
+
+def build_result_xlsx(df) -> bytes:
+    """결과 DataFrame → 색상 입힌 엑셀 bytes (창고별로 정렬)."""
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "유통기한 모니터"
+    ws.append(_XLSX_COLS)
+    for c in ws[1]:
+        c.font = Font(bold=True, color="FFFFFF")
+        c.fill = PatternFill("solid", fgColor="305496")
+        c.alignment = Alignment(horizontal="center", vertical="center")
+    if df is not None and not df.empty:
+        for _, r in df.sort_values(["창고", "상태"]).iterrows():
+            ws.append([r.get(c, "") for c in _XLSX_COLS])
+            fill = PatternFill("solid", fgColor=_XLSX_FILL.get(r.get("_color", ""), "FFFFFF"))
+            for cell in ws[ws.max_row]:
+                cell.fill = fill
+    widths = [8, 11, 30, 13, 20, 16, 14, 40]
+    for i, w in enumerate(widths, start=1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    ws.freeze_panes = "A2"
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 # ─── Supabase 감지 ─────────────────────────────────────────────────────────
 # 우선순위: JAEGO_SUPABASE_* (재고모니터 전용/기존 프로젝트) > SUPABASE_* (통합 공용)
@@ -311,9 +346,25 @@ if uploaded:
         c3.metric("✅ 정상", int((result_df["_color"] == "").sum()),
                   help="락 없는 동일 유통기한 재고 있음")
 
+        # 비정상만 보기 + 엑셀 다운로드
+        _f1, _f2 = st.columns([2, 2])
+        with _f1:
+            abn_only = st.toggle("⚠ 비정상(위험·주의)만 보기", value=False)
+        view_df = (result_df[result_df["_color"].isin(["red", "orange"])]
+                   if abn_only else result_df)
+        with _f2:
+            st.download_button(
+                "📥 결과 엑셀 다운로드",
+                build_result_xlsx(view_df),
+                f"유통기한모니터_{date.today():%Y%m%d}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=True)
+
+        if view_df.empty:
+            st.info("표시할 결과가 없습니다 (비정상 없음).")
         st.subheader("📊 분석 결과 (창고별)")
         for wh in sel_whs:
-            wh_df = result_df[result_df["창고"] == wh].reset_index(drop=True)
+            wh_df = view_df[view_df["창고"] == wh].reset_index(drop=True)
             if wh_df.empty:
                 continue
             _r = int((wh_df["_color"] == "red").sum())
