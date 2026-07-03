@@ -22,7 +22,7 @@ try:
 except Exception:
     pass
 
-st.title("🖨️ 수출 라벨(피킹분) 인쇄")
+st.title("🖨️ 수출 표식지")
 st.caption("상세_리스트(inventory,order).xlsx → 출고건별 라벨을 출력장수만큼 자동 인쇄")
 st.info("규칙 · **라벨** = Shipping Instruction · **출력장수** = ROUNDUP(P/L환산) + 여유분  "
         "→ 아래 표에서 수정 가능, [🖨️ 인쇄] 누르면 인쇄창이 바로 열립니다.", icon="📐")

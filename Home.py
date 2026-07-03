@@ -40,7 +40,7 @@ lock = st.Page(
     url_path="lock",
 )
 export_label = st.Page(
-    "export_label/app.py", title="수출 라벨 인쇄", icon="🖨️",
+    "export_label/app.py", title="수출 표식지", icon="🖨️",
     url_path="export",
 )
 
