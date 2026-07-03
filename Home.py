@@ -33,12 +33,24 @@ lock = st.Page(
     url_path="lock",
 )
 
-nav = st.navigation([ov5, coupang, jaego, warehouse, inventory, lock])
+# 기본 사이드바 네비게이션은 숨기고(아래에서 커스텀 구성) 외부 링크를 최상단에 배치
+nav = st.navigation(
+    [ov5, coupang, jaego, warehouse, inventory, lock],
+    position="hidden",
+)
 
-# 외부 앱(일일재고 — PythonAnywhere)으로 이동 링크
-st.sidebar.divider()
+# ── 사이드바 최상단: 외부 앱(PythonAnywhere) 바로가기 ──
 st.sidebar.link_button("🔗 일일재고 (PythonAnywhere)",
                        "https://goal.pythonanywhere.com/",
                        use_container_width=True)
+st.sidebar.link_button("🔗 입고계획 (PythonAnywhere)",
+                       "https://goalkii.pythonanywhere.com/",
+                       use_container_width=True)
+st.sidebar.divider()
+
+# ── 페이지 메뉴 (기본 네비게이션 대체) ──
+for _p in (ov5, coupang, jaego, warehouse, inventory, lock):
+    st.sidebar.page_link(_p, use_container_width=True)
+st.sidebar.divider()
 
 nav.run()
