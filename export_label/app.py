@@ -149,7 +149,7 @@ comp = (
     f'🖨️ 라벨 인쇄 ({total}장)</button>'
     '<span style="margin-left:12px;color:#666;">버튼을 누르면 인쇄창이 열립니다 '
     '(프린터로 인쇄하거나 대상=PDF로 저장)</span></div>'
-    f'<script>const HTML={json.dumps(print_html)};'
+    f'<script>const HTML={json.dumps(print_html).replace("</", "<\\/")};'
     "document.getElementById('pbtn').addEventListener('click',function(){"
     "var w=window.open('','_blank');"
     "if(!w){alert('팝업이 차단되었습니다. 팝업 허용 후 다시 시도하세요.');return;}"
