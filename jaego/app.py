@@ -220,7 +220,7 @@ try:  # 단독 실행 시에만 (통합 Home.py에서 실행되면 무시)
     st.set_page_config(page_title="유통기한 재고 모니터", layout="wide", page_icon="📦")
 except Exception:
     pass
-st.title("📦 유통기한 재고 출고 모니터")
+st.title("📦 신규파우치 점검 프로그램")
 
 # watchlist 테이블 미생성 감지 → 1회 안내 (테이블 만들면 사라짐)
 if USE_SUPABASE:

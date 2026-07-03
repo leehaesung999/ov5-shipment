@@ -27,7 +27,7 @@ try:
 except Exception:
     pass
 
-st.title("🏬 ATN/BNF 창고비교")
+st.title("🏬 분산재고 점검 프로그램")
 st.caption("재고조회 업로드 → IC930(통합) vs 타 창고 유통기한 비교 → 정상/비정상 판정")
 
 

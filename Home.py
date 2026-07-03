@@ -16,7 +16,7 @@ st.set_page_config(page_title="샘표 물류 업무 시스템", layout="wide")
 brand.apply()
 
 ov5 = st.Page(
-    "ov5_page.py", title="OV5 / 농협 지정출고", icon="🟩",
+    "ov5_page.py", title="농협/대리점 지정출고", icon="🟩",
     url_path="ov5", default=True,
 )
 coupang = st.Page(
@@ -24,19 +24,19 @@ coupang = st.Page(
     url_path="coupang",
 )
 jaego = st.Page(
-    "jaego/app.py", title="유통기한 재고 모니터", icon="📦",
+    "jaego/app.py", title="신규파우치 점검 프로그램", icon="📦",
     url_path="jaego",
 )
 warehouse = st.Page(
-    "warehouse/app.py", title="창고비교 (ATN/BNF)", icon="🏬",
+    "warehouse/app.py", title="분산재고 점검 프로그램", icon="🏬",
     url_path="warehouse",
 )
 inventory = st.Page(
-    "inventory/app.py", title="통합센터 재고 분석기", icon="🏭",
+    "inventory/app.py", title="일일 점검 프로그램", icon="🏭",
     url_path="inventory",
 )
 lock = st.Page(
-    "lock/app.py", title="LOCK 변환기", icon="🔒",
+    "lock/app.py", title="LOCK 실사 프로그램", icon="🔒",
     url_path="lock",
 )
 export_label = st.Page(

@@ -28,7 +28,7 @@ try:
 except Exception:
     pass
 
-st.title("🔒 LOCK 재고 변환기")
+st.title("🔒 LOCK 실사 프로그램")
 st.caption("조회1_xxx.xlsx (Lock 재고 원본) → 락.xlsx (필터·정렬 + 피벗)")
 st.info("변환 규칙 · **sheet**: 빈 출고진행열 삭제 + 필터(Location '-' 없음 & 사유≠불가_실사차이) + 정렬 "
         "· **Sheet1**: (Location·ItemID·유통기한) 재고수량 합계 피벗 + 총합계", icon="📐")

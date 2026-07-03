@@ -248,7 +248,7 @@ try:  # 단독 실행 시에만 적용 (통합 Home.py에서 실행되면 이미
     st.set_page_config(page_title="OV5 지정출고 자동매칭", layout="wide")
 except Exception:
     pass
-st.title("OV5 지정출고 자동매칭")
+st.title("농협/대리점 지정출고")
 st.caption("재고 파일 업로드 → 현황 확인 → 주문 파일 업로드 → 매칭 결과 → 다운로드")
 
 settings = load_settings()

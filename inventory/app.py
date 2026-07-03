@@ -27,7 +27,7 @@ try:
 except Exception:
     pass
 
-st.title("🏭 통합센터 재고 분석기")
+st.title("🏭 일일 점검 프로그램")
 st.caption("ERP 재고조회 업로드 → 이중적치 / 재고지 / 유통기한 분석 → 엑셀 다운로드")
 
 
