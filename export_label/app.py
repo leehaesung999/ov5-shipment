@@ -107,33 +107,37 @@ if total == 0:
 
 def build_html(items, auto_print):
     pages, idx = [], 0
-    grand = sum(i["copies"] for i in items)
     for it in items:
-        for k in range(it["copies"]):
+        for _k in range(it["copies"]):
             idx += 1
-            qty = html.escape(str(it["qty"]))
             pages.append(
-                f'<div class="page"><div class="top">'
-                f'<span>📦 수출 피킹분</span>'
-                f'<span>파레트 {html.escape(str(it["pallet"]))} · 수량 {qty}</span></div>'
-                f'<div class="mid"><div class="txt">{html.escape(it["label"])}</div></div>'
-                f'<div class="bot"><span>이 출고건 {k+1} / {it["copies"]} 장</span>'
-                f'<span>전체 {idx} / {grand}</span></div></div>'
+                '<div class="page">'
+                '<div class="title">수출피킹분</div>'
+                f'<div class="body"><div class="txt">{html.escape(it["label"])}</div></div>'
+                '</div>'
             )
-    onload = ' onload="setTimeout(function(){window.print();},250)"' if auto_print else ""
+    # 원본과 동일: 가로 A4 · 중앙정렬 · 제목 80pt / 본문 70pt (맑은 고딕 볼드).
+    # 긴 텍스트는 페이지를 넘치지 않게 자동 축소(원본 크기를 상한으로 유지).
+    do_print = "setTimeout(function(){window.print();},200);" if auto_print else ""
     return (
         '<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>'
-        '@page{size:A4;margin:12mm;}*{box-sizing:border-box;}'
-        "body{font-family:'Malgun Gothic','맑은 고딕',sans-serif;margin:0;}"
-        '.page{page-break-after:always;height:265mm;display:flex;flex-direction:column;}'
+        '@page{size:A4 landscape;margin:6mm 10mm;}*{box-sizing:border-box;}'
+        "body{font-family:'Malgun Gothic','맑은 고딕','돋움',sans-serif;margin:0;}"
+        '.page{page-break-after:always;height:186mm;display:flex;flex-direction:column;'
+        'align-items:center;justify-content:center;overflow:hidden;}'
         '.page:last-child{page-break-after:auto;}'
-        '.top{font-size:20px;color:#222;border-bottom:3px solid #111;padding-bottom:8px;'
-        'display:flex;justify-content:space-between;align-items:flex-end;}'
-        '.mid{flex:1;display:flex;align-items:center;justify-content:center;text-align:center;padding:10px;}'
-        '.mid .txt{font-size:46px;font-weight:800;line-height:1.35;word-break:keep-all;}'
-        '.bot{font-size:17px;color:#555;border-top:2px solid #bbb;padding-top:8px;'
-        'display:flex;justify-content:space-between;}'
-        f'</style></head><body{onload}>' + "".join(pages) + "</body></html>"
+        '.title{width:100%;font-size:80pt;font-weight:800;text-align:center;line-height:1.0;'
+        'border-bottom:2px solid #000;padding-bottom:3mm;margin-bottom:4mm;}'
+        '.body{flex:1;width:100%;display:flex;align-items:center;justify-content:center;'
+        'text-align:center;overflow:hidden;}'
+        '.body .txt{font-size:70pt;font-weight:800;line-height:1.2;word-break:keep-all;}'
+        '</style></head><body>' + "".join(pages) +
+        '<script>(function(){'
+        'document.querySelectorAll(".body").forEach(function(b){'
+        'var t=b.querySelector(".txt");var s=parseFloat(getComputedStyle(t).fontSize);'
+        'while((t.scrollHeight>b.clientHeight||t.scrollWidth>b.clientWidth)&&s>18){'
+        's-=3;t.style.fontSize=s+"px";}});'
+        + do_print + '})();</script></body></html>'
     )
 
 
