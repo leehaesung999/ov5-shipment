@@ -33,3 +33,6 @@ inventory/data/backup/
 
 # LOCK 변환기 런타임 임시
 lock/_tmp/
+
+# 외박스 요청 리스트 로컬 저장(공유는 Supabase)
+box_request/_*.json
