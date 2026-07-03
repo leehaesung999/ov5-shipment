@@ -4,9 +4,16 @@
 배포: Streamlit Cloud Main file path = Home.py
 사이드바 상단의 페이지 메뉴로 앱들을 오갑니다.
 """
+import sys
+from pathlib import Path
+
 import streamlit as st
 
-st.set_page_config(page_title="사내 도구 통합", layout="wide")
+sys.path.insert(0, str(Path(__file__).parent))
+import brand  # noqa: E402
+
+st.set_page_config(page_title="샘표 물류 업무 시스템", layout="wide")
+brand.apply()
 
 ov5 = st.Page(
     "ov5_page.py", title="OV5 / 농협 지정출고", icon="🟩",

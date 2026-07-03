@@ -4,9 +4,16 @@
 한 주소에서 OV5/쿠팡/재고모니터/창고비교/재고분석기 전환 + 외부앱 링크.
 Home.py 와 동일한 멀티페이지 네비게이션.
 """
+import sys
+from pathlib import Path
+
 import streamlit as st
 
-st.set_page_config(page_title="사내 도구 통합", layout="wide")
+sys.path.insert(0, str(Path(__file__).parent))
+import brand  # noqa: E402
+
+st.set_page_config(page_title="샘표 물류 업무 시스템", layout="wide")
+brand.apply()
 
 ov5 = st.Page(
     "ov5_page.py", title="OV5 / 농협 지정출고", icon="🟩",
