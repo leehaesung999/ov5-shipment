@@ -36,14 +36,10 @@ export_label = st.Page(
     "export_label/app.py", title="수출 라벨 인쇄", icon="🖨️",
     url_path="export",
 )
-box_request = st.Page(
-    "box_request/app.py", title="외박스 요청 리스트", icon="🗃️",
-    url_path="box",
-)
 
 # 기본 사이드바 네비게이션은 숨기고(아래에서 커스텀 구성) 외부 링크를 최상단에 배치
 nav = st.navigation(
-    [ov5, coupang, jaego, warehouse, inventory, lock, export_label, box_request],
+    [ov5, coupang, jaego, warehouse, inventory, lock, export_label],
     position="hidden",
 )
 
@@ -57,7 +53,7 @@ st.sidebar.link_button("🔗 입고계획 (PythonAnywhere)",
 st.sidebar.divider()
 
 # ── 페이지 메뉴 (기본 네비게이션 대체) ──
-for _p in (ov5, coupang, jaego, warehouse, inventory, lock, export_label, box_request):
+for _p in (ov5, coupang, jaego, warehouse, inventory, lock, export_label):
     st.sidebar.page_link(_p, use_container_width=True)
 st.sidebar.divider()
 
