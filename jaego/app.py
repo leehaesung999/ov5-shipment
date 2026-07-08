@@ -509,8 +509,16 @@ if uploaded:
             disp["상태"] = [f'{_EMO.get(c, "")} {s}'
                           for c, s in zip(wh_df["_color"], wh_df["상태"])]
             disp.insert(0, "확인", seed)
+            _bg = wh_df["_color"].tolist()   # 행별 색 (disp 행 순서와 일치)
+
+            def _row_style(row, bg=_bg):
+                return [f"background-color: {BG.get(bg[row.name], '#FFFFFF')}"] * len(row)
+
+            # Styler로 행 전체 배경색 유지 + 체크박스 편집 가능
+            styled = disp.style.apply(_row_style, axis=1).map(
+                lambda _: "font-weight: bold", subset=["등록 유통기한"])
             edited = st.data_editor(
-                disp, key=f"ed_{wh}", hide_index=True, use_container_width=True,
+                styled, key=f"ed_{wh}", hide_index=True, use_container_width=True,
                 height=min(600, 60 + len(disp) * 38),
                 column_config={"확인": st.column_config.CheckboxColumn(
                     "확인", help="확인 완료 시 체크 — 저장되어 다음 분석에도 유지", default=False)},
