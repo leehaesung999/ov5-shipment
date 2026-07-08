@@ -1323,5 +1323,6 @@ def analyze_nonlock_expiry(stock_path, master_path, output_path,
         "출고가능_있음": n_avail,
         "합산전_행수": raw_rows,
         "결과파일": str(output_path),
+        "rows": out_rows,   # 화면 표시(확인 체크)용 원본 행 데이터
     }
 

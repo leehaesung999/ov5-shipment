@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import base64
 import io
+import json
 import sys
 from datetime import date, datetime
 from pathlib import Path
@@ -31,6 +32,106 @@ def _save(upload, name) -> str:
     p = TMP / name
     p.write_bytes(upload.getvalue())
     return str(p)
+
+
+# ---------- 확인 체크 (영속·누적) — 기존 app_settings(jsonb)에 저장 ----------
+NONLOCK_CHECK_KEY = "inventory_nonlock_checks"
+_CHECK_FILE = HERE / "_checks.json"  # 로컬 폴백
+
+
+def _load_checks(settings_key) -> dict:
+    """{rowkey: True} — 확인 완료 항목."""
+    if _SB_OK:
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", settings_key).execute()
+            v = (r.data[0].get("value") or {}) if r.data else {}
+            return {k: True for k, val in v.items() if val}
+        except Exception:
+            pass
+    try:
+        if _CHECK_FILE.exists():
+            return json.loads(_CHECK_FILE.read_text(encoding="utf-8")).get(settings_key, {})
+    except Exception:
+        pass
+    return {}
+
+
+def _save_checks(settings_key, mapping: dict) -> None:
+    if _SB_OK:
+        try:
+            _sb().table("app_settings").upsert(
+                {"key": settings_key, "value": mapping}, on_conflict="key").execute()
+            return
+        except Exception:
+            pass
+    try:
+        alld = {}
+        if _CHECK_FILE.exists():
+            alld = json.loads(_CHECK_FILE.read_text(encoding="utf-8"))
+        alld[settings_key] = mapping
+        _CHECK_FILE.write_text(json.dumps(alld, ensure_ascii=False), encoding="utf-8")
+    except Exception:
+        pass
+
+
+def _show_nonlock_checks(rows):
+    """비Lock 유통기한 결과를 확인 체크칸과 함께 표시. 체크는 누적 저장 → 다음엔 재확인 불필요."""
+    if not rows:
+        st.info("결과 데이터가 없습니다 (비Lock 임박 없음).")
+        return
+
+    def _mkkey(r):  # (품목코드, 유통기한) 조합 = 합산 단위, 실행마다 안정적
+        return f'{r.get("품목코드", "")}|{r.get("유통기한_원본", "")}'
+
+    saved = _load_checks(NONLOCK_CHECK_KEY)
+    keys_all = [_mkkey(r) for r in rows]
+    done_n = sum(1 for k in keys_all if saved.get(k))
+    hide = st.toggle(f"✔ 확인완료({done_n}) 숨기기 — 다음엔 재확인 안 함",
+                     value=False, key="nl_hide")
+
+    view, vkeys = [], []
+    for r, k in zip(rows, keys_all):
+        if hide and saved.get(k):
+            continue
+        view.append(r)
+        vkeys.append(k)
+    if not view:
+        st.success("표시할 미확인 항목이 없습니다. (모두 확인 완료) 🎉")
+        return
+
+    disp = pd.DataFrame([{
+        "확인": saved.get(k, False),
+        "품목코드": r.get("품목코드", ""),
+        "품목명": r.get("품목명", ""),
+        "유통기한": r.get("유통기한"),
+        "수량": r.get("수량"),
+        "잔존일수": r.get("잔존일수"),
+        "잔존개월": r.get("잔존개월"),
+        "잔존율(%)": round((r.get("잔존율") or 0) * 100, 1),
+        "잔존율40도달일": r.get("잔존율40_도달일"),
+        "공유여부": r.get("공유여부"),
+    } for r, k in zip(view, vkeys)])
+
+    st.caption(f"총 {len(disp):,}행 · '확인' 체크는 저장되어 다음 분석에도 누적됩니다")
+    edited = st.data_editor(
+        disp, key="nl_editor", hide_index=True, use_container_width=True,
+        height=min(600, 80 + len(disp) * 35),
+        column_config={"확인": st.column_config.CheckboxColumn(
+            "확인", help="확인 완료 시 체크 → 저장·누적, 다음엔 재확인 불필요", default=False)},
+        disabled=[c for c in disp.columns if c != "확인"])
+
+    # 변경분만 저장 (강제 rerun 없음 → 무한루프 방지)
+    changed = False
+    for i, k in enumerate(vkeys):
+        newv = bool(edited.iloc[i]["확인"])
+        if newv != saved.get(k, False):
+            if newv:
+                saved[k] = True
+            else:
+                saved.pop(k, None)
+            changed = True
+    if changed:
+        _save_checks(NONLOCK_CHECK_KEY, saved)
 
 
 def _show_xlsx(data: bytes):
@@ -259,6 +360,7 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
         # 유통기한 함수는 내부에서 datetime과 빼기 → date를 datetime으로 변환
         _today = datetime.combine(today, datetime.min.time()) if isinstance(today, date) else today
         diff_qty = None
+        extra = {}
         try:
             if up_daily:
                 diff_qty = core.load_차이수량_from_일일입력(_save(up_daily, "_daily.xlsx"))
@@ -286,13 +388,15 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
                 core.analyze_ov6_expiry(stock_path, master_path, str(op),
                                         threshold=thr, today=_today, log=log)
             elif key == "nonlock":
-                core.analyze_nonlock_expiry(stock_path, master_path, str(op),
-                                            threshold=thr, today=_today, log=log)
+                _stat = core.analyze_nonlock_expiry(stock_path, master_path, str(op),
+                                                    threshold=thr, today=_today, log=log)
+                if isinstance(_stat, dict):
+                    extra["rows"] = _stat.get("rows")
         except Exception as e:
             return {"error": str(e), "logs": logs}
         if not op.exists():
             return {"error": "결과 파일이 생성되지 않았습니다.", "logs": logs}
-        return {"data": op.read_bytes(), "name": op.name, "logs": logs}
+        return {"data": op.read_bytes(), "name": op.name, "logs": logs, **extra}
 
     actions = [a for a in ALL_ACTIONS if a[2] in action_keys]
     for label, hint, key, out_tag in actions:
@@ -317,7 +421,10 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
             res = st.session_state.inv_results.get(key)
             if res and not res.get("error") and res.get("data"):
                 with st.expander(f"📄 {label} — 결과 화면 보기", expanded=True):
-                    _show_xlsx(res["data"])
+                    if key == "nonlock" and res.get("rows") is not None:
+                        _show_nonlock_checks(res["rows"])
+                    else:
+                        _show_xlsx(res["data"])
 
     st.caption("ⓘ 각 버튼은 독립 실행 — 원하는 것만 눌러 결과를 받으세요. "
                "담당자(공유여부 자동채움)는 Supabase(비공개)에 저장돼 결과에 반영됩니다.")
