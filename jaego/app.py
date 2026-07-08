@@ -17,7 +17,7 @@ from openpyxl.utils import get_column_letter
 
 
 _XLSX_COLS = ["창고", "품목코드", "품목명", "등록 유통기한",
-              "출고진행 유통기한", "최신 출고 유통기한", "상태", "비고"]
+              "출고진행 유통기한", "최신 출고 유통기한", "상태", "비고", "담당자", "확인여부"]
 _XLSX_FILL = {"red": "FFCCCC", "orange": "FFE0B2", "": "FFFFFF"}
 
 
@@ -37,7 +37,7 @@ def build_result_xlsx(df) -> bytes:
             fill = PatternFill("solid", fgColor=_XLSX_FILL.get(r.get("_color", ""), "FFFFFF"))
             for cell in ws[ws.max_row]:
                 cell.fill = fill
-    widths = [8, 11, 30, 13, 20, 16, 14, 40]
+    widths = [8, 11, 30, 13, 20, 16, 14, 40, 12, 8]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
@@ -140,6 +140,87 @@ def _save_local(wl: list) -> None:
             r["id"] = i + 1
     with open(WATCHLIST_FILE, "w", encoding="utf-8") as f:
         json.dump(wl, f, ensure_ascii=False, indent=2)
+
+
+# ─── 담당자 매핑 (품목코드 → 담당자) ─────────────────────────────────────────
+
+def _fetch_담당자_supabase() -> dict:
+    """통합 Supabase app_settings['inventory_담당자']에서 로드 (재고분석기와 공유)."""
+    try:
+        url = st.secrets.get("SUPABASE_URL")
+        key = st.secrets.get("SUPABASE_KEY")
+        if not (url and key):
+            return {}
+        from supabase import create_client
+        cli = create_client(url, key)
+        r = cli.table("app_settings").select("value").eq("key", "inventory_담당자").execute()
+        raw = (r.data[0].get("value") or {}) if r.data else {}
+        return {str(k).strip(): str(v).strip() for k, v in raw.items()}
+    except Exception:
+        return {}
+
+
+def _parse_담당자_xlsx(file) -> dict:
+    """업로드 담당자 엑셀 → {품목코드: 담당자} (1열 코드, 2열 담당자)."""
+    try:
+        d = pd.read_excel(file, dtype=str, header=0)
+        if d.shape[1] < 2:
+            return {}
+        cc, nc = d.columns[0], d.columns[1]
+        m = {}
+        for _, r in d.iterrows():
+            c = str(r[cc]).strip()
+            n = str(r[nc]).strip()
+            if c and c.lower() != "nan" and n and n.lower() != "nan":
+                m[c] = n
+        return m
+    except Exception:
+        return {}
+
+
+# ─── 확인 체크 (영속) ────────────────────────────────────────────────────────
+
+CHECKS_TABLE_MISSING = False
+CHECKS_FILE = APP_DIR / "checks.json"
+
+
+def load_checks() -> dict:
+    """{key: True} — 확인 완료된 항목만."""
+    global CHECKS_TABLE_MISSING
+    if USE_SUPABASE:
+        try:
+            resp = _sb().table("jaego_checks").select("key,checked").execute()
+            return {r["key"]: True for r in (resp.data or []) if r.get("checked")}
+        except Exception:
+            CHECKS_TABLE_MISSING = True
+            return {}
+    if CHECKS_FILE.exists():
+        try:
+            with open(CHECKS_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def set_check(key: str, checked: bool) -> None:
+    if USE_SUPABASE:
+        try:
+            if checked:
+                _sb().table("jaego_checks").upsert(
+                    {"key": key, "checked": True}, on_conflict="key").execute()
+            else:
+                _sb().table("jaego_checks").delete().eq("key", key).execute()
+        except Exception:
+            pass
+    else:
+        data = load_checks()
+        if checked:
+            data[key] = True
+        else:
+            data.pop(key, None)
+        with open(CHECKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 # ─── 수량 파싱 ─────────────────────────────────────────────────────────────
@@ -281,6 +362,20 @@ if show_register:
 
 st.divider()
 
+# ── 담당자 데이터 (분석결과에 품목 담당자 표시) ──────────────────────────────
+with st.expander("👤 담당자 데이터 (분석결과에 품목 담당자 표시)"):
+    st.caption("품목코드 → 담당자 매핑. 재고분석기에 등록된 담당자(Supabase)를 자동으로 불러오며, "
+               "파일을 올리면 그 파일이 우선합니다. (1열: 품목코드, 2열: 담당자)")
+    up_dam = st.file_uploader("담당자 로우데이터 xlsx", type=["xlsx"], key="jaego_dam")
+    if up_dam is not None:
+        st.session_state["_dam_map"] = _parse_담당자_xlsx(up_dam)
+    dam_map = st.session_state.get("_dam_map") or _fetch_담당자_supabase()
+    if dam_map:
+        _src = "업로드 파일" if st.session_state.get("_dam_map") else "Supabase(재고분석기 공유)"
+        st.success(f"담당자 {len(dam_map)}명 로드됨 · 출처: {_src}")
+    else:
+        st.info("담당자 데이터 없음 — '담당자' 열은 비어서 표시됩니다.")
+
 # ── 파일 업로드 및 분석 ────────────────────────────────────────────────────
 st.header("📂 파일 업로드")
 uploaded = st.file_uploader(
@@ -327,6 +422,7 @@ if uploaded:
                             "최신 출고 유통기한": max(출고중) if 출고중 else "-",
                             "상태":            status,
                             "비고":            note,
+                            "담당자":          dam_map.get(str(item["code"]).strip(), ""),
                             "_color":          color,
                         }
                     )
@@ -346,13 +442,31 @@ if uploaded:
         c3.metric("✅ 정상", int((result_df["_color"] == "").sum()),
                   help="락 없는 동일 유통기한 재고 있음")
 
-        # 비정상만 보기 + 엑셀 다운로드
-        _f1, _f2 = st.columns([2, 2])
+        # ── 확인 체크 로드 (+ 엑셀용 확인여부 열) ──
+        checks = load_checks()
+        if USE_SUPABASE and CHECKS_TABLE_MISSING:
+            st.warning(
+                "⚠ `jaego_checks` 테이블이 없어 확인 체크가 저장되지 않습니다. "
+                "SQL Editor에서 1회 실행:\n\n```sql\ncreate table jaego_checks (\n"
+                "  key text primary key,\n  checked boolean not null default true,\n"
+                "  updated timestamptz default now()\n);\n```")
+
+        def _mk_key(r):
+            return "|".join([str(r["창고"]), str(r["품목코드"]), str(r["등록 유통기한"]),
+                             str(r["상태"]), str(r["출고진행 유통기한"])])
+        result_df["확인여부"] = ["✔" if checks.get(_mk_key(r), False) else ""
+                              for _, r in result_df.iterrows()]
+
+        # 비정상만 보기 / 확인완료 숨기기 / 엑셀 다운로드
+        _f1, _f2, _f3 = st.columns([2, 2, 2])
         with _f1:
             abn_only = st.toggle("⚠ 비정상(위험·주의)만 보기", value=False)
+        with _f2:
+            hide_checked = st.toggle("✔ 확인완료 숨기기", value=False,
+                                     help="이미 확인(체크)한 항목을 목록에서 숨겨 반복 작업 방지")
         view_df = (result_df[result_df["_color"].isin(["red", "orange"])]
                    if abn_only else result_df)
-        with _f2:
+        with _f3:
             st.download_button(
                 "📥 결과 엑셀 다운로드",
                 build_result_xlsx(view_df),
@@ -362,25 +476,54 @@ if uploaded:
 
         if view_df.empty:
             st.info("표시할 결과가 없습니다 (비정상 없음).")
+        st.caption("✔ '확인' 열을 체크하면 저장되어, 다음에 다시 분석해도 유지됩니다 (동일 작업 반복 방지).")
         st.subheader("📊 분석 결과 (창고별)")
+
+        _SEV = {"red": 0, "orange": 1, "": 2}
+        _EMO = {"red": "🔴", "orange": "🟠", "": "✅"}
         for wh in sel_whs:
-            wh_df = view_df[view_df["창고"] == wh].reset_index(drop=True)
+            wh_df = view_df[view_df["창고"] == wh].copy()
+            if wh_df.empty:
+                continue
+            wh_df = wh_df.sort_values("_color", key=lambda s: s.map(_SEV),
+                                      kind="stable").reset_index(drop=True)
+            # 행별 key + 확인 seed (+ 확인완료 숨기기 필터)
+            keys, seed, keep = [], [], []
+            for _, r in wh_df.iterrows():
+                k = _mk_key(r)
+                chk = checks.get(k, False)
+                if hide_checked and chk:
+                    keep.append(False)
+                    continue
+                keep.append(True)
+                keys.append(k)
+                seed.append(chk)
+            wh_df = wh_df[keep].reset_index(drop=True)
             if wh_df.empty:
                 continue
             _r = int((wh_df["_color"] == "red").sum())
             _o = int((wh_df["_color"] == "orange").sum())
             _k = int((wh_df["_color"] == "").sum())
             st.markdown(f"#### 🏬 {wh}  —  🔴 위험 {_r} · 🟠 주의 {_o} · ✅ 정상 {_k}")
-            disp = wh_df.drop(columns=["_color", "창고"])
-            _colors = wh_df["_color"].tolist()
-
-            def _row_style(row, colors=_colors):
-                return [f"background-color: {BG.get(colors[row.name], '#FFFFFF')}"] * len(row)
-
-            styled = disp.style.apply(_row_style, axis=1).map(
-                lambda _: "font-weight: bold", subset=["등록 유통기한"])
-            st.dataframe(styled, use_container_width=True,
-                         height=min(500, 60 + len(wh_df) * 38))
+            disp = wh_df.drop(columns=["_color", "창고", "확인여부"]).copy()
+            disp["상태"] = [f'{_EMO.get(c, "")} {s}'
+                          for c, s in zip(wh_df["_color"], wh_df["상태"])]
+            disp.insert(0, "확인", seed)
+            edited = st.data_editor(
+                disp, key=f"ed_{wh}", hide_index=True, use_container_width=True,
+                height=min(600, 60 + len(disp) * 38),
+                column_config={"확인": st.column_config.CheckboxColumn(
+                    "확인", help="확인 완료 시 체크 — 저장되어 다음 분석에도 유지", default=False)},
+                disabled=[c for c in disp.columns if c != "확인"])
+            # 변경분만 저장 후 새로고침(확인여부·숨기기 즉시 반영)
+            changed = False
+            for i, k in enumerate(keys):
+                newv = bool(edited.iloc[i]["확인"])
+                if newv != seed[i]:
+                    set_check(k, newv)
+                    changed = True
+            if changed:
+                st.rerun()
 
         st.markdown("""
 ---
