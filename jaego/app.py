@@ -178,22 +178,35 @@ def _parse_담당자_xlsx(file) -> dict:
         return {}
 
 
-# ─── 확인 체크 (영속) ────────────────────────────────────────────────────────
+# ─── 확인 체크 (영속) — 기존 app_settings(jsonb)에 저장 → 별도 테이블/SQL 불필요 ──
 
-CHECKS_TABLE_MISSING = False
 CHECKS_FILE = APP_DIR / "checks.json"
+CHECKS_KEY  = "jaego_checks"
+
+
+def _settings_client():
+    """app_settings 테이블이 있는 통합 Supabase(SUPABASE_*) 클라이언트."""
+    try:
+        url = st.secrets.get("SUPABASE_URL")
+        key = st.secrets.get("SUPABASE_KEY")
+        if not (url and key):
+            return None
+        from supabase import create_client
+        return create_client(url, key)
+    except Exception:
+        return None
 
 
 def load_checks() -> dict:
-    """{key: True} — 확인 완료된 항목만."""
-    global CHECKS_TABLE_MISSING
-    if USE_SUPABASE:
+    """{key: True} — 확인 완료된 항목."""
+    cli = _settings_client()
+    if cli is not None:
         try:
-            resp = _sb().table("jaego_checks").select("key,checked").execute()
-            return {r["key"]: True for r in (resp.data or []) if r.get("checked")}
+            r = cli.table("app_settings").select("value").eq("key", CHECKS_KEY).execute()
+            v = (r.data[0].get("value") or {}) if r.data else {}
+            return {k: True for k, val in v.items() if val}
         except Exception:
-            CHECKS_TABLE_MISSING = True
-            return {}
+            pass
     if CHECKS_FILE.exists():
         try:
             with open(CHECKS_FILE, "r", encoding="utf-8") as f:
@@ -204,23 +217,28 @@ def load_checks() -> dict:
 
 
 def set_check(key: str, checked: bool) -> None:
-    if USE_SUPABASE:
+    cli = _settings_client()
+    if cli is not None:
         try:
+            r = cli.table("app_settings").select("value").eq("key", CHECKS_KEY).execute()
+            cur = (r.data[0].get("value") or {}) if r.data else {}
             if checked:
-                _sb().table("jaego_checks").upsert(
-                    {"key": key, "checked": True}, on_conflict="key").execute()
+                cur[key] = True
             else:
-                _sb().table("jaego_checks").delete().eq("key", key).execute()
+                cur.pop(key, None)
+            cli.table("app_settings").upsert(
+                {"key": CHECKS_KEY, "value": cur}, on_conflict="key").execute()
+            return
         except Exception:
             pass
+    # 로컬 폴백
+    data = load_checks()
+    if checked:
+        data[key] = True
     else:
-        data = load_checks()
-        if checked:
-            data[key] = True
-        else:
-            data.pop(key, None)
-        with open(CHECKS_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, indent=2)
+        data.pop(key, None)
+    with open(CHECKS_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 
 # ─── 수량 파싱 ─────────────────────────────────────────────────────────────
@@ -444,12 +462,6 @@ if uploaded:
 
         # ── 확인 체크 로드 (+ 엑셀용 확인여부 열) ──
         checks = load_checks()
-        if USE_SUPABASE and CHECKS_TABLE_MISSING:
-            st.warning(
-                "⚠ `jaego_checks` 테이블이 없어 확인 체크가 저장되지 않습니다. "
-                "SQL Editor에서 1회 실행:\n\n```sql\ncreate table jaego_checks (\n"
-                "  key text primary key,\n  checked boolean not null default true,\n"
-                "  updated timestamptz default now()\n);\n```")
 
         def _mk_key(r):
             return "|".join([str(r["창고"]), str(r["품목코드"]), str(r["등록 유통기한"]),
@@ -523,15 +535,12 @@ if uploaded:
                 column_config={"확인": st.column_config.CheckboxColumn(
                     "확인", help="확인 완료 시 체크 — 저장되어 다음 분석에도 유지", default=False)},
                 disabled=[c for c in disp.columns if c != "확인"])
-            # 변경분만 저장 후 새로고침(확인여부·숨기기 즉시 반영)
-            changed = False
+            # 변경분만 저장 (data_editor가 편집 시 자동 rerun하므로 강제 rerun 불필요 —
+            # 강제 rerun은 저장 실패(테이블 없음) 시 무한 루프를 유발하므로 제거)
             for i, k in enumerate(keys):
                 newv = bool(edited.iloc[i]["확인"])
                 if newv != seed[i]:
                     set_check(k, newv)
-                    changed = True
-            if changed:
-                st.rerun()
 
         st.markdown("""
 ---
