@@ -31,9 +31,13 @@ warehouse = st.Page(
     "warehouse/app.py", title="분산재고 점검 프로그램", icon="🏬",
     url_path="warehouse",
 )
-inventory = st.Page(
-    "inventory/app.py", title="일일 점검 프로그램", icon="🏭",
-    url_path="inventory",
+sheets = st.Page(
+    "inventory/sheets.py", title="실사지 출력", icon="📋",
+    url_path="sheets",
+)
+checks = st.Page(
+    "inventory/checks.py", title="점검 (이중적치·하프도달)", icon="🔎",
+    url_path="checks",
 )
 lock = st.Page(
     "lock/app.py", title="LOCK 실사 프로그램", icon="🔒",
@@ -46,7 +50,7 @@ export_label = st.Page(
 
 # 기본 사이드바 네비게이션은 숨기고(아래에서 커스텀 구성) 외부 링크를 최상단에 배치
 nav = st.navigation(
-    [ov5, coupang, jaego, warehouse, inventory, lock, export_label],
+    [ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label],
     position="hidden",
 )
 
@@ -60,7 +64,7 @@ st.sidebar.link_button("🔗 입고계획 (PythonAnywhere)",
 st.sidebar.divider()
 
 # ── 페이지 메뉴 (기본 네비게이션 대체) ──
-for _p in (ov5, coupang, jaego, warehouse, inventory, lock, export_label):
+for _p in (ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label):
     st.sidebar.page_link(_p, use_container_width=True)
 st.sidebar.divider()
 
