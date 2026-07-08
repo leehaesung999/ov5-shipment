@@ -7,10 +7,12 @@
 from __future__ import annotations
 
 import base64
+import io
 import sys
 from datetime import date, datetime
 from pathlib import Path
 
+import pandas as pd
 import streamlit as st
 
 HERE = Path(__file__).parent
@@ -29,6 +31,29 @@ def _save(upload, name) -> str:
     p = TMP / name
     p.write_bytes(upload.getvalue())
     return str(p)
+
+
+def _show_xlsx(data: bytes):
+    """결과 xlsx bytes를 화면에 표로 표시 (시트별). 다운로드와 별개."""
+    try:
+        xls = pd.ExcelFile(io.BytesIO(data))
+    except Exception as e:
+        st.warning(f"미리보기 표시 실패: {e} (엑셀 다운로드는 정상입니다)")
+        return
+    multi = len(xls.sheet_names) > 1
+    for sh in xls.sheet_names:
+        try:
+            d = xls.parse(sh)
+        except Exception:
+            continue
+        if multi:
+            st.markdown(f"**[{sh}]**  ·  {len(d):,}행")
+        if d is None or d.empty:
+            st.info("결과 데이터가 없습니다 (해당 없음).")
+            continue
+        st.caption(f"총 {len(d):,}행")
+        st.dataframe(d, use_container_width=True,
+                     height=min(560, 80 + len(d) * 35))
 
 
 # ---------- 담당자(개인정보) — 공개 레포 대신 Supabase(비공개)에서 ----------
@@ -134,8 +159,11 @@ ALL_ACTIONS = [
 ]
 
 
-def render(action_keys, title: str, caption: str):
-    """action_keys(집합)에 해당하는 기능만 노출하는 재고 분석 페이지 렌더."""
+def render(action_keys, title: str, caption: str, preview: bool = False):
+    """action_keys(집합)에 해당하는 기능만 노출하는 재고 분석 페이지 렌더.
+
+    preview=True 이면 실행 결과를 엑셀 다운로드와 함께 화면에 표로 표시한다.
+    """
     try:
         st.set_page_config(page_title="통합센터 재고 분석기", layout="wide")
     except Exception:
@@ -284,6 +312,12 @@ def render(action_keys, title: str, caption: str):
                     st.download_button(
                         f"📥 {res['name']}", res["data"], res["name"],
                         mime=MIME, key=f"dl_{key}", use_container_width=True)
+        # 결과 화면 미리보기 (점검 페이지) — 엑셀 다운로드는 위에 그대로 유지
+        if preview:
+            res = st.session_state.inv_results.get(key)
+            if res and not res.get("error") and res.get("data"):
+                with st.expander(f"📄 {label} — 결과 화면 보기", expanded=True):
+                    _show_xlsx(res["data"])
 
     st.caption("ⓘ 각 버튼은 독립 실행 — 원하는 것만 눌러 결과를 받으세요. "
                "담당자(공유여부 자동채움)는 Supabase(비공개)에 저장돼 결과에 반영됩니다.")
