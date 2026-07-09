@@ -321,10 +321,6 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
         st.divider()
         threshold = st.slider("유통기한 분석 잔존율 기준", 0.0, 1.0, 0.5, 0.05)
         today = st.date_input("기준일자", value=date.today())
-        st.divider()
-        st.caption("실사지 보조 입력 (선택)")
-        up_daily = st.file_uploader("일일입력 xlsx (차이수량 반영)", type=["xlsx"], key="inv_daily")
-        up_prod = st.file_uploader("제품별리스트 xlsx (토요일 실사지용)", type=["xlsx"], key="inv_prod")
 
     # ---------- 입력 ----------
     st.subheader("① ERP 재고조회 파일 업로드")
@@ -349,7 +345,7 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
     if "inv_results" not in st.session_state:
         st.session_state.inv_results = {}
 
-    def run_action(key, out_tag):
+    def run_action(key, out_tag, up_daily=None, up_prod=None):
         logs: list[str] = []
 
         def log(*a):
@@ -374,7 +370,7 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
                 core.edit_재고지_1단_전체(stock_path, master_path, str(op), log=log)
             elif key == "토요일":
                 if not up_prod:
-                    return {"error": "제품별리스트 파일을 사이드바에서 업로드하세요.", "logs": logs}
+                    return {"error": "제품별리스트 파일을 이 버튼 바로 아래에서 업로드하세요.", "logs": logs}
                 code_set = core.load_품목코드_from_제품별리스트(_save(up_prod, "_prod.xlsx"))
                 log(f"출하 대상 품목 {len(code_set):,}건")
                 core.edit_재고지_1단(stock_path, master_path, LOC_LIST, str(op),
@@ -398,16 +394,30 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
             return {"error": "결과 파일이 생성되지 않았습니다.", "logs": logs}
         return {"data": op.read_bytes(), "name": op.name, "logs": logs, **extra}
 
-    actions = [a for a in ALL_ACTIONS if a[2] in action_keys]
+    # 기능별 추가 입력 (해당 버튼 바로 아래에서 업로드) — (kind, 라벨, 필수여부)
+    AUX = {
+        "일일실사": [("daily", "📎 일일입력 xlsx — 차이수량 반영 (선택)", False)],
+        "토요일":   [("prod", "📎 제품별리스트 xlsx — 출하 대상 품목 (필수)", True),
+                     ("daily", "📎 일일입력 xlsx — 차이수량 반영 (선택)", False)],
+    }
+    _amap = {a[2]: a for a in ALL_ACTIONS}
+    actions = [_amap[k] for k in action_keys if k in _amap]  # 전달된 순서 그대로 표시
     for label, hint, key, out_tag in actions:
         c1, c2 = st.columns([3, 2])
         with c1:
             clicked = st.button(f"▶ {label}", key=f"btn_{key}", use_container_width=True)
             st.caption(hint)
+            aux = {}
+            for kind, lbl, required in AUX.get(key, []):
+                f = st.file_uploader(lbl, type=["xlsx"], key=f"aux_{key}_{kind}")
+                aux[kind] = f
+                if required and not f:
+                    st.caption("⚠ 이 파일을 올려야 실행됩니다")
         with c2:
             if clicked:
                 with st.spinner(f"{label} 실행 중..."):
-                    st.session_state.inv_results[key] = run_action(key, out_tag)
+                    st.session_state.inv_results[key] = run_action(
+                        key, out_tag, up_daily=aux.get("daily"), up_prod=aux.get("prod"))
             res = st.session_state.inv_results.get(key)
             if res:
                 if res.get("error"):
