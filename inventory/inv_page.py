@@ -25,7 +25,7 @@ DEFAULT_MASTER = DATA / "기준정보.xlsx"
 TMP = HERE / "_tmp"
 TMP.mkdir(exist_ok=True)
 MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-LOC_LIST = str(DATA / "지정로케이션.xlsx")
+LOC_DEFAULT = str(DATA / "지정로케이션.xlsx")  # 내장 기본본 (Supabase 갱신 없을 때 사용)
 
 
 def _save(upload, name) -> str:
@@ -209,6 +209,8 @@ def _setup_담당자(up_file) -> tuple:
 # ---------- 기준정보(마스터) — Supabase 영구 저장 + 마지막 업데이트 날짜 ----------
 MASTER_META_KEY = "inventory_master_meta"
 MASTER_B64_KEY = "inventory_master_b64"
+LOC_META_KEY = "inventory_loc_meta"
+LOC_B64_KEY = "inventory_loc_b64"
 
 
 def _fetch_master_meta():
@@ -241,6 +243,43 @@ def _store_master(data: bytes, count: int) -> bool:
             {"key": MASTER_META_KEY, "value": meta}, on_conflict="key").execute()
         _sb().table("app_settings").upsert(
             {"key": MASTER_B64_KEY, "value": base64.b64encode(data).decode()},
+            on_conflict="key").execute()
+        return True
+    except Exception:
+        return False
+
+
+# ---------- 지정로케이션 — Supabase 영구 저장 (기준정보와 동일 방식) ----------
+def _fetch_loc_meta():
+    if not _SB_OK:
+        return None
+    try:
+        r = _sb().table("app_settings").select("value").eq("key", LOC_META_KEY).execute()
+        return r.data[0].get("value") if r.data else None
+    except Exception:
+        return None
+
+
+@st.cache_data(show_spinner=False)
+def _fetch_loc_bytes(version: str):
+    try:
+        r = _sb().table("app_settings").select("value").eq("key", LOC_B64_KEY).execute()
+        if r.data:
+            return base64.b64decode(r.data[0]["value"])
+    except Exception:
+        pass
+    return None
+
+
+def _store_loc(data: bytes, count: int) -> bool:
+    if not _SB_OK:
+        return False
+    try:
+        meta = {"updated": datetime.now().strftime("%Y-%m-%d %H:%M"), "n": count}
+        _sb().table("app_settings").upsert(
+            {"key": LOC_META_KEY, "value": meta}, on_conflict="key").execute()
+        _sb().table("app_settings").upsert(
+            {"key": LOC_B64_KEY, "value": base64.b64encode(data).decode()},
             on_conflict="key").execute()
         return True
     except Exception:
@@ -319,6 +358,42 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
         else:
             st.warning("담당자 미적용 — 공유여부 자동채움 생략")
         st.divider()
+        st.caption("지정로케이션 — 일일/토요일 실사지 대상 위치(1단). 바뀌면 업로드하면 저장·공유됩니다.")
+        up_loc = st.file_uploader("지정로케이션 xlsx 업로드(갱신)", type=["xlsx"], key="inv_loc")
+        _lmeta = None
+        if up_loc:
+            _loc_tmp = _save(up_loc, "_loc.xlsx")
+            try:
+                _ln = len(core.load_location_list(_loc_tmp))
+            except Exception:
+                _ln = 0
+            if _store_loc(up_loc.getvalue(), _ln):
+                st.success(f"지정로케이션 {_ln}건 저장됨 (모두에게 공유·영구)")
+                _fetch_loc_bytes.clear()  # 캐시 무효화
+            else:
+                st.info(f"지정로케이션 {_ln}건 (이 세션에만 적용 — 로컬/비공유 모드)")
+            loc_list_path = _loc_tmp
+            _lmeta = _fetch_loc_meta()
+        else:
+            _lmeta = _fetch_loc_meta()
+            if _lmeta:
+                _lb = _fetch_loc_bytes(str(_lmeta.get("updated", "")))
+                if _lb:
+                    _lp = TMP / "_loc_sb.xlsx"
+                    _lp.write_bytes(_lb)
+                    loc_list_path = str(_lp)
+                else:
+                    loc_list_path = LOC_DEFAULT if Path(LOC_DEFAULT).exists() else None
+            else:
+                loc_list_path = LOC_DEFAULT if Path(LOC_DEFAULT).exists() else None
+        if _lmeta:
+            st.info(f"📅 지정로케이션 마지막 업데이트: **{_lmeta.get('updated', '?')}** "
+                    f"({_lmeta.get('n', '?')}건)")
+        elif Path(LOC_DEFAULT).exists():
+            st.caption("지정로케이션: 내장 기본본 — 업로드하면 날짜가 갱신됩니다")
+        else:
+            st.warning("지정로케이션 없음 — 업로드 필요")
+        st.divider()
         threshold = st.slider("유통기한 분석 잔존율 기준", 0.0, 1.0, 0.5, 0.05)
         today = st.date_input("기준일자", value=date.today())
 
@@ -358,13 +433,16 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
         diff_qty = None
         extra = {}
         try:
+            if key in ("일일실사", "토요일") and not loc_list_path:
+                return {"error": "지정로케이션 파일이 없습니다. 사이드바 '지정로케이션'에서 업로드하세요.",
+                        "logs": logs}
             if up_daily:
                 diff_qty = core.load_차이수량_from_일일입력(_save(up_daily, "_daily.xlsx"))
                 log(f"일일입력 차이수량 {len(diff_qty):,}건 반영")
             if key == "이중적치":
                 core.analyze_and_save(stock_path, master_path, str(op), log=log)
             elif key == "일일실사":
-                core.edit_재고지_1단(stock_path, master_path, LOC_LIST, str(op),
+                core.edit_재고지_1단(stock_path, master_path, loc_list_path, str(op),
                                      diff_qty=diff_qty, log=log)
             elif key == "1단전체":
                 core.edit_재고지_1단_전체(stock_path, master_path, str(op), log=log)
@@ -373,7 +451,7 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
                     return {"error": "제품별리스트 파일을 이 버튼 바로 아래에서 업로드하세요.", "logs": logs}
                 code_set = core.load_품목코드_from_제품별리스트(_save(up_prod, "_prod.xlsx"))
                 log(f"출하 대상 품목 {len(code_set):,}건")
-                core.edit_재고지_1단(stock_path, master_path, LOC_LIST, str(op),
+                core.edit_재고지_1단(stock_path, master_path, loc_list_path, str(op),
                                      code_filter=code_set, diff_qty=diff_qty, log=log)
             elif key == "2_6단":
                 core.edit_재고지_2_6단(stock_path, master_path, str(op), log=log)
