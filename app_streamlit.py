@@ -61,6 +61,9 @@ st.sidebar.link_button("🔗 일일재고 (PythonAnywhere)",
 st.sidebar.link_button("🔗 입고계획 (PythonAnywhere)",
                        "https://goalkii.pythonanywhere.com/",
                        use_container_width=True)
+st.sidebar.link_button("🔗 반품관리 (PythonAnywhere)",
+                       "https://goalnety.pythonanywhere.com/",
+                       use_container_width=True)
 st.sidebar.link_button("🔗 출하파트",
                        "https://sampyo-shipment-hkdmdboz3qwiysgcozwchd.streamlit.app/",
                        use_container_width=True)
