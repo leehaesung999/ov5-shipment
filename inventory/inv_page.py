@@ -291,7 +291,7 @@ ALL_ACTIONS = [
     ("🔀 이중적치 분석", "같은 로케이션에 잔량 혼재 검출 (Lock·OV·정파렛트 제외)", "이중적치", "이중적치"),
     ("📋 일일 재고실사지", "지정 로케이션 일일 실사지 · 일일입력 있으면 차이수량 반영(대시보드 다운)", "일일실사", "일일재고실사지"),
     ("📋 1단 재고실사지", "1단 전체 로케이션 실사지", "1단전체", "1단재고실사지"),
-    ("📅 토요일 실사지 (쿠팡 출고)", "출하Inv=IC930 품목만 · 제품별리스트 업로드 필요(출하체크·대시보드 다운)", "토요일", "토요일실사지"),
+    ("📅 토요일 실사지 (쿠팡+컬리)", "쿠팡 필수 + 컬리 선택 · 두 제품별리스트의 출하Inv=IC930 품목 합집합", "토요일", "토요일실사지"),
     ("📋 재고지 (2~6단)", "고단(2-6단) 재고지", "2_6단", "재고지_2_6단"),
     ("⏳ OV5 하프도달 점검", "OV5 재고 중 잔존율 ≤ 기준(50%) 유통기한 임박", "ov5", "OV5유통기한"),
     ("⏳ OV6 하프도달 점검", "OV6 재고 중 잔존율 ≤ 기준(50%) 유통기한 임박", "ov6", "OV6유통기한"),
@@ -420,7 +420,7 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
     if "inv_results" not in st.session_state:
         st.session_state.inv_results = {}
 
-    def run_action(key, out_tag, up_daily=None, up_prod=None):
+    def run_action(key, out_tag, up_daily=None, up_prod=None, up_prod2=None):
         logs: list[str] = []
 
         def log(*a):
@@ -448,9 +448,15 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
                 core.edit_재고지_1단_전체(stock_path, master_path, str(op), log=log)
             elif key == "토요일":
                 if not up_prod:
-                    return {"error": "제품별리스트 파일을 이 버튼 바로 아래에서 업로드하세요.", "logs": logs}
+                    return {"error": "쿠팡 제품별리스트 파일을 이 버튼 바로 아래에서 업로드하세요.", "logs": logs}
                 code_set = core.load_품목코드_from_제품별리스트(_save(up_prod, "_prod.xlsx"))
-                log(f"출하 대상 품목 {len(code_set):,}건")
+                log(f"쿠팡 출하 대상 품목 {len(code_set):,}건")
+                if up_prod2:
+                    code_set2 = core.load_품목코드_from_제품별리스트(_save(up_prod2, "_prod2.xlsx"))
+                    log(f"컬리 출하 대상 품목 {len(code_set2):,}건")
+                    before = len(code_set)
+                    code_set = code_set | code_set2
+                    log(f"합집합: {len(code_set):,}건 (쿠팡 {before} + 컬리 {len(code_set2)} − 중복 {before + len(code_set2) - len(code_set)})")
                 core.edit_재고지_1단(stock_path, master_path, loc_list_path, str(op),
                                      code_filter=code_set, diff_qty=diff_qty, log=log)
             elif key == "2_6단":
@@ -475,7 +481,8 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
     # 기능별 추가 입력 (해당 버튼 바로 아래에서 업로드) — (kind, 라벨, 필수여부)
     AUX = {
         "일일실사": [("daily", "📎 일일입력 xlsx — 차이수량 반영 (선택)", False)],
-        "토요일":   [("prod", "📎 제품별리스트 xlsx — 출하 대상 품목 (필수)", True),
+        "토요일":   [("prod", "📎 쿠팡 제품별리스트 xlsx — 출하 대상 품목 (필수)", True),
+                     ("prod2", "📎 컬리 제품별리스트 xlsx — 출하 대상 품목 (선택, 있으면 합집합)", False),
                      ("daily", "📎 일일입력 xlsx — 차이수량 반영 (선택)", False)],
     }
     _amap = {a[2]: a for a in ALL_ACTIONS}
@@ -495,7 +502,8 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
             if clicked:
                 with st.spinner(f"{label} 실행 중..."):
                     st.session_state.inv_results[key] = run_action(
-                        key, out_tag, up_daily=aux.get("daily"), up_prod=aux.get("prod"))
+                        key, out_tag, up_daily=aux.get("daily"),
+                        up_prod=aux.get("prod"), up_prod2=aux.get("prod2"))
             res = st.session_state.inv_results.get(key)
             if res:
                 if res.get("error"):
