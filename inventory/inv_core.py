@@ -27,6 +27,7 @@ TEMPLATE_1단 = _BASE / "data" / "재고지_1단_템플릿.xlsx"
 TEMPLATE_1단_전체 = _BASE / "data" / "재고지_1단_전체_템플릿.xlsx"
 TEMPLATE_단별 = _BASE / "data" / "재고지_단별_템플릿.xlsx"
 LOC_LIST_2_6단 = _BASE / "data" / "재고지_2_6단_로케이션.xlsx"
+LOC_LIST_1단_전체 = _BASE / "data" / "1단_전체_로케이션.xlsx"
 TEMPLATE_LOCK_유통기한 = _BASE / "data" / "LOCK_유통기한_템플릿.xlsx"
 담당자_PATH = _BASE / "data" / "물품담당자.xlsx"
 
@@ -562,6 +563,34 @@ def edit_재고지_1단(stock_path, master_path, loc_list_path,
             "차이수량": diff_qty.get(r["code"]) if diff_qty else None,
         })
 
+    # 차이수량 있는데 실사지에 안 뽑힌 품목 → 지정로케이션 fixed_loc으로 가상 행 추가
+    if diff_qty:
+        covered = {r["제품코드"] for r in rows if r["차이수량"] is not None}
+        missing = set(diff_qty) - covered
+        if missing:
+            code_info = {}  # code → (fixed_loc, name, 유통기한)
+            for r in records:
+                c = r["code"]
+                if c not in missing or c in code_info:
+                    continue
+                fl = str(r["fixed_loc"] or "").strip() if r["fixed_loc"] else ""
+                if fl.endswith("10") and fl in loc_set:
+                    code_info[c] = (fl, r["name"], r["유통기한"])
+            for code, (loc, name, exp) in code_info.items():
+                m = master.get(code, {})
+                rows.append({
+                    "로케이션": loc,
+                    "제품코드": code,
+                    "제품명": name or m.get("name"),
+                    "유통기한_원본": None,
+                    "유통기한": exp,
+                    "배면": m.get("배면"),
+                    "하대": m.get("하대"),
+                    "현재고": 0,
+                    "차이수량": diff_qty[code],
+                })
+            log(f"  지정위치 재고 0인 차이수량 품목 {len(code_info):,}건 추가")
+
     # 같은 품목코드가 여러 행이면, 가장 늦은 유통기한 행에만 차이수량 유지
     if diff_qty:
         by_code = defaultdict(list)
@@ -658,6 +687,8 @@ def write_재고지_1단_전체_from_template(rows, output_path, template_path=N
 def edit_재고지_1단_전체(stock_path, master_path, output_path, log=print):
     """ERP 재고 + 기준정보 → 1단 전체 재고지 (지정 로케이션 필터 없음, 8열 양식).
     - 단수 = 로케이션 끝 2자리 == '10'
+    - 1단 마스터 파일(data/1단_전체_로케이션.xlsx) 있으면 마스터 union 재고 등장 로케이션
+      으로 빈 로케이션까지 표시 (월간 전체 재고조사용)
     - 현재고 = 변환재고 (출고가능_box + lock_box)
     """
     stock_path = Path(stock_path)
@@ -669,12 +700,21 @@ def edit_재고지_1단_전체(stock_path, master_path, output_path, log=print):
     master = load_master(master_path)
     log(f"  제품 {len(master):,}건")
 
+    full_loc = set()
+    if LOC_LIST_1단_전체.exists():
+        try:
+            full_loc = load_location_list(LOC_LIST_1단_전체)
+            log(f"1단 로케이션 마스터: {len(full_loc):,}건")
+        except Exception as e:
+            log(f"※ 1단 마스터 로드 실패({e}) — 재고 있는 것만 출력")
+
     log(f"재고 파일 로드: {stock_path.name}")
     records = load_stock(stock_path)
     log(f"  재고 {len(records):,}건")
 
     log("1단 전체 재고지 편집 중...")
-    rows = []
+    recs_by_loc = defaultdict(list)
+    seen_loc = set()
     for r in records:
         loc = r["location"]
         if loc is None:
@@ -682,12 +722,13 @@ def edit_재고지_1단_전체(stock_path, master_path, output_path, log=print):
         loc = str(loc).strip()
         if not loc.endswith("10"):
             continue
+        seen_loc.add(loc)
 
         m = master.get(r["code"], {})
         현재고 = (r["출고가능_box"] or 0) + (r["lock_box"] or 0)
         if 현재고 == 0:
-            continue  # 재고 없는 행 제외 (원본 xlsm의 G=0 행 삭제와 동일)
-        rows.append({
+            continue
+        recs_by_loc[loc].append({
             "로케이션": loc,
             "제품코드": r["code"],
             "제품명": r["name"],
@@ -697,7 +738,27 @@ def edit_재고지_1단_전체(stock_path, master_path, output_path, log=print):
             "하대": m.get("하대"),
             "현재고": 현재고,
         })
-    log(f"  편집 대상 {len(rows):,}행")
+
+    full_set = (full_loc | seen_loc) if full_loc else seen_loc
+    rows = []
+    filled = empty = 0
+    for loc in sorted(full_set):
+        if loc in recs_by_loc:
+            rows.extend(recs_by_loc[loc])
+            filled += len(recs_by_loc[loc])
+        else:
+            rows.append({
+                "로케이션": loc,
+                "제품코드": None,
+                "제품명": None,
+                "유통기한_원본": None,
+                "유통기한": None,
+                "배면": None,
+                "하대": None,
+                "현재고": None,
+            })
+            empty += 1
+    log(f"  편집 대상 {len(rows):,}행 (재고있음 {filled:,} + 빈 로케이션 {empty:,})")
 
     if not TEMPLATE_1단_전체.exists():
         raise FileNotFoundError(
@@ -889,14 +950,20 @@ def edit_재고지_2_6단(stock_path, master_path, output_path, log=print):
     master = load_master(master_path)
     log(f"  제품 {len(master):,}건")
 
-    # 2단/6단 로케이션 마스터 로드 (있으면)
+    # 2~6단 로케이션 마스터 로드 (시트가 있는 단만)
     full_loc_by_단 = {}
     if LOC_LIST_2_6단.exists():
         try:
-            full_loc_by_단[2] = load_location_list(LOC_LIST_2_6단, sheet_name="2단")
-            full_loc_by_단[6] = load_location_list(LOC_LIST_2_6단, sheet_name="6단")
-            log(f"2단/6단 로케이션 마스터: 2단 {len(full_loc_by_단[2]):,}건, "
-                f"6단 {len(full_loc_by_단[6]):,}건")
+            wb_master = openpyxl.load_workbook(LOC_LIST_2_6단, data_only=True, read_only=True)
+            sheet_names = set(wb_master.sheetnames)
+            wb_master.close()
+            for 단 in (2, 3, 4, 5, 6):
+                sn = f"{단}단"
+                if sn in sheet_names:
+                    full_loc_by_단[단] = load_location_list(LOC_LIST_2_6단, sheet_name=sn)
+            log("단별 로케이션 마스터: " + ", ".join(
+                f"{단}단 {len(full_loc_by_단[단]):,}건" for 단 in sorted(full_loc_by_단)
+            ))
         except Exception as e:
             log(f"※ 로케이션 마스터 로드 실패({e}) — 재고 있는 것만 출력")
             full_loc_by_단 = {}
@@ -909,8 +976,9 @@ def edit_재고지_2_6단(stock_path, master_path, output_path, log=print):
 
     log("2~6단 재고지 편집 중...")
 
-    # 단별 로케이션별 레코드 모음
+    # 단별 로케이션별 레코드 모음 + ERP에 등장한 전체 로케이션 set
     recs_by_loc = {단: defaultdict(list) for 단 in (2, 3, 4, 5, 6)}
+    seen_loc_by_단 = {단: set() for 단 in (2, 3, 4, 5, 6)}
     for r in records:
         loc = r["location"]
         if loc is None:
@@ -919,6 +987,7 @@ def edit_재고지_2_6단(stock_path, master_path, output_path, log=print):
         단 = _단_suffix(loc)
         if 단 is None:
             continue
+        seen_loc_by_단[단].add(loc)
 
         m = master.get(r["code"], {})
         현재고 = (r["출고가능_box"] or 0) + (r["lock_box"] or 0)
@@ -936,38 +1005,35 @@ def edit_재고지_2_6단(stock_path, master_path, output_path, log=print):
         })
 
     # 단별 rows 구성
+    # - 2/6단: 마스터 파일 있으면 마스터 기준
+    # - 3/4/5단: ERP 재고에 등장한 로케이션 전체 (재고 0 포함)
     rows_by_단 = {단: [] for 단 in (2, 3, 4, 5, 6)}
     stats = {}
     for 단 in (2, 3, 4, 5, 6):
         if 단 in full_loc_by_단:
-            # 2단/6단: 로케이션 마스터 기준 (빈 로케이션 포함)
             full_set = full_loc_by_단[단] | set(recs_by_loc[단].keys())
-            filled = 0
-            empty = 0
-            for loc in sorted(full_set):
-                if loc in recs_by_loc[단]:
-                    rows_by_단[단].extend(recs_by_loc[단][loc])
-                    filled += len(recs_by_loc[단][loc])
-                else:
-                    rows_by_단[단].append({
-                        "로케이션": loc,
-                        "제품코드": None,
-                        "제품명": None,
-                        "유통기한_원본": None,
-                        "유통기한": None,
-                        "배면": None,
-                        "하대": None,
-                        "현재고": None,
-                    })
-                    empty += 1
-            stats[f"{단}단"] = (filled, empty)
-            log(f"  {단}단: 재고있음 {filled:,}행 + 빈 로케이션 {empty:,}행 = {len(rows_by_단[단]):,}행")
         else:
-            # 3/4/5단: 재고 있는 것만
-            for loc, recs in recs_by_loc[단].items():
-                rows_by_단[단].extend(recs)
-            stats[f"{단}단"] = (len(rows_by_단[단]), 0)
-            log(f"  {단}단: {len(rows_by_단[단]):,}행")
+            full_set = seen_loc_by_단[단]
+        filled = 0
+        empty = 0
+        for loc in sorted(full_set):
+            if loc in recs_by_loc[단]:
+                rows_by_단[단].extend(recs_by_loc[단][loc])
+                filled += len(recs_by_loc[단][loc])
+            else:
+                rows_by_단[단].append({
+                    "로케이션": loc,
+                    "제품코드": None,
+                    "제품명": None,
+                    "유통기한_원본": None,
+                    "유통기한": None,
+                    "배면": None,
+                    "하대": None,
+                    "현재고": None,
+                })
+                empty += 1
+        stats[f"{단}단"] = (filled, empty)
+        log(f"  {단}단: 재고있음 {filled:,}행 + 빈 로케이션 {empty:,}행 = {len(rows_by_단[단]):,}행")
 
     if not TEMPLATE_단별.exists():
         raise FileNotFoundError(
