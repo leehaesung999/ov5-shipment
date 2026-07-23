@@ -34,5 +34,8 @@ inventory/data/backup/
 # LOCK 변환기 런타임 임시
 lock/_tmp/
 
+# 창고 레이아웃 색칠 임시
+paint/_tmp/
+
 # 외박스 요청 리스트 로컬 저장(공유는 Supabase)
 box_request/_*.json
