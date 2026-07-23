@@ -254,7 +254,10 @@ def _auto_add_new_items(month_bytes: bytes, ym: str) -> int:
 
 
 def _apply_현재로케_update(update_bytes: bytes) -> dict:
-    """업로드된 (품번, 현재로케) 2컬럼 xlsx를 마스터에 반영.
+    """업로드된 xlsx를 마스터에 반영. 두 가지 형식 자동 인식:
+    - 표준 양식: (품번, 현재로케) 2컬럼
+    - ERP 원본 (Item_*.xlsx): C=로케이션ID, D=보관타입, G=Item code
+      → 고정로케이션 + Item code 있음 + non-OV 만 뽑아 (품번, 현재로케)로 변환
     반환: {"applied": N, "unmatched": [품번...]}"""
     m = _fetch_master_meta()
     if not m:
@@ -265,10 +268,24 @@ def _apply_현재로케_update(update_bytes: bytes) -> dict:
     except Exception as e:
         return {"error": f"파일 읽기 실패: {e}"}
     df_new.columns = [str(c).strip() for c in df_new.columns]
+
+    # ERP 원본 형식 자동 감지
+    if ("품번" not in df_new.columns and "Item code" in df_new.columns
+            and "로케이션ID" in df_new.columns):
+        f = df_new
+        if "보관타입" in f.columns:
+            f = f[f["보관타입"].astype(str).str.strip() == "고정로케이션"]
+        f = f[f["Item code"].notna()]
+        f = f[~f["로케이션ID"].astype(str).str.strip().str.upper().str.startswith("OV")]
+        df_new = pd.DataFrame({
+            "품번": f["Item code"].values,
+            "현재로케": f["로케이션ID"].astype(str).str.strip().values,
+        })
+
     need = ["품번", "현재로케"]
     miss = [c for c in need if c not in df_new.columns]
     if miss:
-        return {"error": f"필수 컬럼 누락: {miss} (양식: 품번, 현재로케)"}
+        return {"error": f"필수 컬럼 누락: {miss} (양식: 품번, 현재로케 — 또는 ERP Item_*.xlsx 원본)"}
 
     master_bytes = _fetch_master_bytes(m.get("updated", ""))
     df_master = pd.read_excel(io.BytesIO(master_bytes))
@@ -344,12 +361,17 @@ if up_master:
             st.rerun()
 
 # 현재로케만 일괄 업데이트 (재배치 이동 후 반영용)
-with st.expander("🔄 현재로케만 일괄 업데이트 (품번·현재로케 2컬럼)"):
-    st.caption("실제 창고 이동 후 (품번, 새 현재로케) 목록을 업로드하면 마스터의 해당 품번의 현재로케만 갱신됩니다.")
-    st.download_button("📥 빈 양식 다운로드", data=_make_현재로케_template(),
+with st.expander("🔄 현재로케만 일괄 업데이트"):
+    st.caption(
+        "다음 두 가지 형식 모두 지원:\n"
+        "- **ERP Item_*.xlsx 원본**: 고정로케이션 + Item code 있음 자동 추출\n"
+        "- **표준 양식**: 품번·현재로케 2컬럼 (아래 양식 다운로드)"
+    )
+    st.download_button("📥 표준 양식 다운로드 (선택)", data=_make_현재로케_template(),
                        file_name="현재로케_업데이트_양식.xlsx", mime=MIME_XLSX,
                        width='stretch', key="dl_loc_tmpl")
-    up_loc = st.file_uploader("품번-현재로케 xlsx 업로드", type=["xlsx"], key="upl_loc_update")
+    up_loc = st.file_uploader("xlsx 업로드 (ERP 원본 또는 표준 양식)",
+                              type=["xlsx"], key="upl_loc_update")
     if up_loc and st.button("✓ 현재로케 갱신 적용", type="primary", width='stretch', key="btn_loc_apply"):
         res = _apply_현재로케_update(up_loc.getvalue())
         if res.get("error"):
