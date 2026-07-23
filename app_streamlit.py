@@ -52,7 +52,7 @@ paint = st.Page(
     url_path="paint",
 )
 abc = st.Page(
-    "abc/app.py", title="ABC 재배치 분석", icon="📊",
+    "abc_analysis/app.py", title="ABC 재배치 분석", icon="📊",
     url_path="abc",
 )
 
