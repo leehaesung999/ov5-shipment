@@ -37,5 +37,8 @@ lock/_tmp/
 # 창고 레이아웃 색칠 임시
 paint/_tmp/
 
+# ABC 재배치 분석기 임시
+abc/_tmp/
+
 # 외박스 요청 리스트 로컬 저장(공유는 Supabase)
 box_request/_*.json
