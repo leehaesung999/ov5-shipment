@@ -19,7 +19,7 @@ import streamlit as st
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
-import core  # noqa: E402
+import abc_core as core  # noqa: E402  (최상위 core 패키지와 이름 충돌 방지)
 
 TMP = HERE / "_tmp"
 TMP.mkdir(exist_ok=True)
