@@ -327,6 +327,83 @@ def _make_현재로케_template() -> bytes:
     return buf.getvalue()
 
 
+def _apply_하대_update(update_bytes: bytes) -> dict:
+    """업로드된 xlsx에서 (품번, 하대=배면×배단)을 뽑아 마스터 하대 컬럼 갱신.
+    두 형식 자동 인식:
+    - 표준 양식: (품번, 하대) 2컬럼
+    - ERP Item 마스터 원본: A=Item code, AD=배면, AE=배단 → 하대 자동계산
+    반환: {"applied": N, "unmatched": [...]}"""
+    m = _fetch_master_meta()
+    if not m:
+        return {"error": "마스터가 등록되지 않았습니다."}
+
+    try:
+        df_new = pd.read_excel(io.BytesIO(update_bytes), sheet_name=0)
+    except Exception as e:
+        return {"error": f"파일 읽기 실패: {e}"}
+    df_new.columns = [str(c).strip() for c in df_new.columns]
+
+    # ERP Item 마스터 원본 자동 감지 (배면/배단 컬럼 존재)
+    if ("하대" not in df_new.columns
+            and "Item code" in df_new.columns
+            and "배면" in df_new.columns and "배단" in df_new.columns):
+        f = df_new[["Item code", "배면", "배단"]].copy()
+        f = f[f["Item code"].notna() & f["배면"].notna() & f["배단"].notna()]
+        f["배면"] = pd.to_numeric(f["배면"], errors="coerce")
+        f["배단"] = pd.to_numeric(f["배단"], errors="coerce")
+        f = f.dropna(subset=["배면", "배단"])
+        f["하대"] = (f["배면"] * f["배단"]).astype(int)
+        f = f[f["하대"] > 0]
+        df_new = pd.DataFrame({
+            "품번": f["Item code"].values,
+            "하대": f["하대"].values,
+        })
+
+    need = ["품번", "하대"]
+    miss = [c for c in need if c not in df_new.columns]
+    if miss:
+        return {"error": f"필수 컬럼 누락: {miss} (양식: 품번, 하대 — 또는 ERP Item 마스터 원본 A/AD/AE)"}
+
+    master_bytes = _fetch_master_bytes(m.get("updated", ""))
+    df_master = pd.read_excel(io.BytesIO(master_bytes))
+    df_master.columns = [str(c).strip() for c in df_master.columns]
+    hadae_col = "하대(박스/팔레트)"
+    if "품번" not in df_master.columns or hadae_col not in df_master.columns:
+        return {"error": f"마스터에 '품번' 또는 '{hadae_col}' 컬럼이 없습니다."}
+
+    df_new = df_new[need].dropna().copy()
+    df_new["품번"] = _norm_code(df_new["품번"])
+    df_new["하대"] = pd.to_numeric(df_new["하대"], errors="coerce")
+    df_new = df_new.dropna(subset=["하대"])
+    df_master["품번"] = _norm_code(df_master["품번"])
+
+    update_map = dict(zip(df_new["품번"], df_new["하대"].astype(int)))
+    master_codes = set(df_master["품번"])
+    matched = set(update_map) & master_codes
+    unmatched = sorted(set(update_map) - master_codes)
+
+    if not matched:
+        return {"applied": 0, "unmatched": unmatched,
+                "error": "마스터와 일치하는 품번이 하나도 없습니다."}
+
+    mask = df_master["품번"].isin(update_map)
+    df_master.loc[mask, hadae_col] = df_master.loc[mask, "품번"].map(update_map)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df_master.to_excel(w, sheet_name="location_master", index=False)
+    _store_master(buf.getvalue(), len(df_master))
+    return {"applied": len(matched), "unmatched": unmatched}
+
+
+def _make_하대_template() -> bytes:
+    df = pd.DataFrame(columns=["품번", "하대"])
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, sheet_name="하대_업데이트", index=False)
+    return buf.getvalue()
+
+
 # ---------- UI ----------
 st.title("📊 ABC 재배치 분석")
 
@@ -374,6 +451,28 @@ with st.expander("🔄 현재로케만 일괄 업데이트"):
                               type=["xlsx"], key="upl_loc_update")
     if up_loc and st.button("✓ 현재로케 갱신 적용", type="primary", width='stretch', key="btn_loc_apply"):
         res = _apply_현재로케_update(up_loc.getvalue())
+        if res.get("error"):
+            st.error(res["error"])
+        else:
+            st.success(f"적용 {res['applied']:,}개, 미매칭 {len(res['unmatched']):,}개")
+            if res["unmatched"]:
+                st.caption("미매칭 품번 (앞 20개): " + ", ".join(res["unmatched"][:20]))
+            st.rerun()
+
+# 하대 일괄 업데이트 (ERP Item 마스터에서 배면×배단 자동 계산)
+with st.expander("🔢 하대(박스/팔레트) 일괄 업데이트"):
+    st.caption(
+        "다음 두 가지 형식 모두 지원:\n"
+        "- **ERP Item 마스터 원본**: A=Item code, AD=배면, AE=배단 → 하대=AD×AE 자동 계산\n"
+        "- **표준 양식**: 품번·하대 2컬럼"
+    )
+    st.download_button("📥 표준 양식 다운로드 (선택)", data=_make_하대_template(),
+                       file_name="하대_업데이트_양식.xlsx", mime=MIME_XLSX,
+                       width='stretch', key="dl_hadae_tmpl")
+    up_hadae = st.file_uploader("xlsx 업로드 (ERP Item 마스터 또는 표준 양식)",
+                                type=["xlsx"], key="upl_hadae_update")
+    if up_hadae and st.button("✓ 하대 갱신 적용", type="primary", width='stretch', key="btn_hadae_apply"):
+        res = _apply_하대_update(up_hadae.getvalue())
         if res.get("error"):
             st.error(res["error"])
         else:
