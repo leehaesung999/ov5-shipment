@@ -34,6 +34,10 @@ def edit_원본(src_path: Path, out_path: Path) -> dict:
     ws_src = wb_src.active
 
     header = [c.value for c in ws_src[1]]
+    # I/J/K 헤더를 '로케이션ID'로 (사용자 관행 반영)
+    while len(header) < 11:
+        header.append(None)
+    header[8] = header[9] = header[10] = "로케이션ID"
 
     wb_out = openpyxl.Workbook()
     ws_out = wb_out.active
@@ -54,7 +58,12 @@ def edit_원본(src_path: Path, out_path: Path) -> dict:
             continue
         if loc.upper().startswith("OV"):
             continue
-        ws_out.append(list(row))
+        # I/J/K 열에 C열(로케이션ID) 복사
+        out_row = list(row)
+        while len(out_row) < 11:
+            out_row.append(None)
+        out_row[8] = out_row[9] = out_row[10] = loc
+        ws_out.append(out_row)
         kept += 1
 
     wb_src.close()
