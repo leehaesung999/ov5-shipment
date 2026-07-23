@@ -329,14 +329,24 @@ st.divider()
 # ────────── ② 월별 데이터 등록 ──────────
 st.header("② 월별 출고 데이터")
 
-up_month = st.file_uploader("월별 xlsx 업로드 (예: 2026-06.xlsx)", type=["xlsx"], key="upl_month")
-if up_month:
-    default_ym = _guess_ym(up_month.name)
-    ym = st.text_input("기준월 (YYYY-MM)", value=default_ym, max_chars=7, key="ym_input")
-    valid = bool(re.match(r"^20\d{2}-\d{2}$", ym or ""))
-    if not valid:
-        st.warning("YYYY-MM 형식으로 입력하세요.")
-    if valid and st.button(f"✓ {ym} 로 등록/교체", type="primary", width='stretch'):
+# ① 기준월 먼저 선택
+now = datetime.now()
+default_ym_pick = f"{now.year}-{now.month:02d}"
+ym = st.text_input("① 기준월 (YYYY-MM)", value=default_ym_pick,
+                   max_chars=7, key="ym_input")
+valid = bool(re.match(r"^20\d{2}-\d{2}$", ym or ""))
+if not valid:
+    st.warning("YYYY-MM 형식으로 입력하세요 (예: 2026-05)")
+
+# ② 파일 업로드
+up_month = st.file_uploader(f"② 월별 xlsx 업로드 (기준월 {ym})",
+                            type=["xlsx"], key="upl_month",
+                            disabled=not valid)
+if up_month and valid:
+    guess = _guess_ym(up_month.name)
+    if guess and guess != ym:
+        st.caption(f"⚠ 파일명 추측 `{guess}` ≠ 선택 기준월 `{ym}` — 다시 확인하세요.")
+    if st.button(f"✓ {ym} 로 등록/교체", type="primary", width='stretch'):
         data = up_month.getvalue()
         if _store_month(ym, data):
             st.success(f"{ym} 저장 완료")
