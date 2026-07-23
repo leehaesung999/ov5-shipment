@@ -155,6 +155,42 @@ def _load_workbook_count(data: bytes) -> int:
 MASTER_COLS = ["품번", "품명", "하대(박스/팔레트)", "출시월", "현재로케"]
 
 
+def _normalize_month_file(data: bytes) -> bytes:
+    """원본 xlsx를 3컬럼(품번·품명·일평균출고)으로 정규화.
+    - 헤더에 '품번'/'품명'/'일평균출고' 있으면 그 컬럼 사용
+    - 없으면 C/D/M열(0-based: 2/3/12) 폴백
+    - 이미 3컬럼 편집본이면 통과.
+    """
+    df = pd.read_excel(io.BytesIO(data), sheet_name=0)
+    df.columns = [str(c).strip() for c in df.columns]
+
+    def pick(name, fallback_idx):
+        for c in df.columns:
+            if c == name:
+                return c
+        if fallback_idx < len(df.columns):
+            return df.columns[fallback_idx]
+        return None
+
+    c_code = pick("품번", 2)
+    c_name = pick("품명", 3)
+    c_avg = pick("일평균출고", 12)
+    if not (c_code and c_name and c_avg):
+        # 원본 그대로 반환 (core가 알아서 처리)
+        return data
+
+    out = df[[c_code, c_name, c_avg]].copy()
+    out.columns = ["품번", "품명", "일평균출고"]
+    out = out[out["품번"].notna()]
+    out["품번"] = _norm_code(out["품번"])
+    out["일평균출고"] = pd.to_numeric(out["일평균출고"], errors="coerce").fillna(0)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        out.to_excel(w, sheet_name="sheet", index=False)
+    return buf.getvalue()
+
+
 def _norm_code(s):
     return (
         pd.Series(s).astype(str).str.strip()
@@ -347,9 +383,13 @@ if up_month and valid:
     if guess and guess != ym:
         st.caption(f"⚠ 파일명 추측 `{guess}` ≠ 선택 기준월 `{ym}` — 다시 확인하세요.")
     if st.button(f"✓ {ym} 로 등록/교체", type="primary", width='stretch'):
-        data = up_month.getvalue()
+        try:
+            data = _normalize_month_file(up_month.getvalue())
+        except Exception as e:
+            st.error(f"파일 정규화 실패: {e}")
+            st.stop()
         if _store_month(ym, data):
-            st.success(f"{ym} 저장 완료")
+            st.success(f"{ym} 저장 완료 (품번·품명·일평균출고 3컬럼으로 정규화)")
             n_new = _auto_add_new_items(data, ym)
             if n_new > 0:
                 st.info(f"신규 품목 {n_new:,}건 자동 추가 (출시월 {ym.replace('-','')[-4:]} 설정)")
