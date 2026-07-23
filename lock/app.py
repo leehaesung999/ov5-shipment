@@ -59,4 +59,4 @@ _stats = buf.getvalue().strip()
 if _stats:
     st.code(_stats)
 st.download_button(f"📥 {dst.name} 다운로드", dst.read_bytes(), dst.name,
-                   mime=MIME, use_container_width=True)
+                   mime=MIME, width='stretch')

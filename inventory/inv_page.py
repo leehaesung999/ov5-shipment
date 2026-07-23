@@ -114,7 +114,7 @@ def _show_nonlock_checks(rows):
 
     st.caption(f"총 {len(disp):,}행 · '확인' 체크는 저장되어 다음 분석에도 누적됩니다")
     edited = st.data_editor(
-        disp, key="nl_editor", hide_index=True, use_container_width=True,
+        disp, key="nl_editor", hide_index=True, width='stretch',
         height=min(600, 80 + len(disp) * 35),
         column_config={"확인": st.column_config.CheckboxColumn(
             "확인", help="확인 완료 시 체크 → 저장·누적, 다음엔 재확인 불필요", default=False)},
@@ -153,7 +153,7 @@ def _show_xlsx(data: bytes):
             st.info("결과 데이터가 없습니다 (해당 없음).")
             continue
         st.caption(f"총 {len(d):,}행")
-        st.dataframe(d, use_container_width=True,
+        st.dataframe(d, width='stretch',
                      height=min(560, 80 + len(d) * 35))
 
 
@@ -490,7 +490,7 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
     for label, hint, key, out_tag in actions:
         c1, c2 = st.columns([3, 2])
         with c1:
-            clicked = st.button(f"▶ {label}", key=f"btn_{key}", use_container_width=True)
+            clicked = st.button(f"▶ {label}", key=f"btn_{key}", width='stretch')
             st.caption(hint)
             aux = {}
             for kind, lbl, required in AUX.get(key, []):
@@ -511,7 +511,7 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
                 else:
                     st.download_button(
                         f"📥 {res['name']}", res["data"], res["name"],
-                        mime=MIME, key=f"dl_{key}", use_container_width=True)
+                        mime=MIME, key=f"dl_{key}", width='stretch')
         # 결과 화면 미리보기 (점검 페이지) — 엑셀 다운로드는 위에 그대로 유지
         if preview:
             res = st.session_state.inv_results.get(key)

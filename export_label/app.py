@@ -79,7 +79,7 @@ st.markdown("#### 출력 목록 (수정 가능 · 행 삭제·추가 가능)")
 edited = st.data_editor(
     pd.DataFrame(rows),
     num_rows="dynamic",
-    use_container_width=True,
+    width='stretch',
     key="exlabel_editor",
     column_config={
         "라벨(출고지시)": st.column_config.TextColumn(width="large"),

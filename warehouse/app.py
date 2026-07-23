@@ -86,7 +86,7 @@ with st.sidebar.expander("⚙️ 설정 / 물품정보 — 클릭해서 열기",
     tmpl = pd.DataFrame({"Item code": [1010422, 2032260], "소비기한(월)": [24, 12]})
     buf = io.BytesIO(); tmpl.to_excel(buf, index=False)
     st.download_button("📥 물품정보 양식", buf.getvalue(), "물품정보_양식.xlsx",
-                       use_container_width=True)
+                       width='stretch')
 
 st.info("판정 기준 · IC930(통합)이 타 창고보다 빠르면 **정상** · 타 창고가 더 빠른데 "
         "지정출고 내역 있으면 **정상(지정출고)** · 없으면 **비정상(점검)**", icon="📐")
@@ -173,6 +173,6 @@ def _style(row):
 
 
 styler = disp.style.apply(_style, axis=1).hide(["_ratio"], axis="columns")
-st.dataframe(styler, use_container_width=True, hide_index=True, height=560)
+st.dataframe(styler, width='stretch', hide_index=True, height=560)
 
 st.caption("🟥 비정상   🟨 정상(지정출고)   🟧 유통기한 임박(잔존<50%)")

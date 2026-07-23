@@ -61,15 +61,15 @@ nav = st.navigation(
 # ── 사이드바 최상단: 외부 앱(PythonAnywhere) 바로가기 ──
 st.sidebar.link_button("🔗 일일재고 (PythonAnywhere)",
                        "https://goal.pythonanywhere.com/",
-                       use_container_width=True)
+                       width='stretch')
 st.sidebar.link_button("🔗 입고계획 (PythonAnywhere)",
                        "https://goalkii.pythonanywhere.com/",
-                       use_container_width=True)
+                       width='stretch')
 st.sidebar.divider()
 
 # ── 페이지 메뉴 (기본 네비게이션 대체) ──
 for _p in (ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label, paint):
-    st.sidebar.page_link(_p, use_container_width=True)
+    st.sidebar.page_link(_p, width='stretch')
 st.sidebar.divider()
 
 nav.run()

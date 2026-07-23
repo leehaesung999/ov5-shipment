@@ -107,7 +107,7 @@ with st.sidebar.expander("⚙️ 마스터 / 대상품목 — 클릭해서 열�
     )
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button("💾 저장", use_container_width=True):
+        if st.button("💾 저장", width='stretch'):
             item_names = core.load_item_names()
             items = []
             for _, row in edited_t.iterrows():
@@ -130,7 +130,7 @@ with st.sidebar.expander("⚙️ 마스터 / 대상품목 — 클릭해서 열�
                 msg += f" (마스터에서 {n_auto}건 자동 채움)"
             st.success(msg)
     with col_b:
-        if st.button("🔄 기본11", use_container_width=True,
+        if st.button("🔄 기본11", width='stretch',
                      help="기본 11개로 초기화"):
             cloud_store.save_targets(core.DEFAULT_TARGETS)
             st.success("초기화됨. 새로고침")
@@ -279,7 +279,7 @@ def render_tab(records, fn, key_prefix):
             else:
                 cfg["로케이션"] = st.column_config.TextColumn(disabled=True)
             edited = st.data_editor(
-                df, use_container_width=True, hide_index=True,
+                df, width='stretch', hide_index=True,
                 column_config=cfg, key=f"{key_prefix}_ed_{code}")
             for _, row in edited.iterrows():
                 sel[row["rowid"]] = (row["거래처"] or "")
@@ -302,7 +302,7 @@ short = analysis["date_short"]
 fname = f"{short} 쿠팡 지정출고_자동.xlsx"
 
 if st.button(f"📥 {fname} 생성 + 다운로드", type="primary",
-             use_container_width=True):
+             width='stretch'):
     out_xlsx = TMP / fname
     try:
         core.export(analysis, sel1, sel2, str(out_xlsx))
@@ -316,5 +316,5 @@ if st.button(f"📥 {fname} 생성 + 다운로드", type="primary",
         "💾 브라우저로 다운로드",
         data, fname,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        use_container_width=True,
+        width='stretch',
     )

@@ -351,7 +351,7 @@ if show_register:
             with st.form("add_form", clear_on_submit=True):
                 inp_code   = st.text_input("품목코드", placeholder="예: 2061438")
                 inp_expiry = st.text_input("유통기한 (YYYYMMDD)", placeholder="예: 20270827")
-                submitted  = st.form_submit_button("➕ 등록", use_container_width=True)
+                submitted  = st.form_submit_button("➕ 등록", width='stretch')
 
             if submitted:
                 if inp_code and inp_expiry:
@@ -484,7 +484,7 @@ if uploaded:
                 build_result_xlsx(view_df),
                 f"유통기한모니터_{date.today():%Y%m%d}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                use_container_width=True)
+                width='stretch')
 
         if view_df.empty:
             st.info("표시할 결과가 없습니다 (비정상 없음).")
@@ -530,7 +530,7 @@ if uploaded:
             styled = disp.style.apply(_row_style, axis=1).map(
                 lambda _: "font-weight: bold", subset=["등록 유통기한"])
             edited = st.data_editor(
-                styled, key=f"ed_{wh}", hide_index=True, use_container_width=True,
+                styled, key=f"ed_{wh}", hide_index=True, width='stretch',
                 height=min(600, 60 + len(disp) * 38),
                 column_config={"확인": st.column_config.CheckboxColumn(
                     "확인", help="확인 완료 시 체크 — 저장되어 다음 분석에도 유지", default=False)},
