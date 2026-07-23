@@ -152,6 +152,128 @@ def _load_workbook_count(data: bytes) -> int:
         return 0
 
 
+MASTER_COLS = ["품번", "품명", "하대(박스/팔레트)", "출시월", "현재로케"]
+
+
+def _norm_code(s):
+    return (
+        pd.Series(s).astype(str).str.strip()
+        .str.replace(r"\.0$", "", regex=True)
+    )
+
+
+def _auto_add_new_items(month_bytes: bytes, ym: str) -> int:
+    """월 파일에서 신규 품번을 감지해 마스터에 자동 추가.
+    출시월 = 등록되는 월의 YYMM. 반환값: 추가된 신규 품목 수."""
+    m = _fetch_master_meta()
+    if not m:
+        return 0
+    try:
+        df_monthly = pd.read_excel(io.BytesIO(month_bytes), sheet_name=0)
+    except Exception:
+        return 0
+    df_monthly.columns = [str(c).strip() for c in df_monthly.columns]
+    if "품번" not in df_monthly.columns:
+        return 0
+
+    master_bytes = _fetch_master_bytes(m.get("updated", ""))
+    if not master_bytes:
+        return 0
+    df_master = pd.read_excel(io.BytesIO(master_bytes))
+    df_master.columns = [str(c).strip() for c in df_master.columns]
+    for col in MASTER_COLS:
+        if col not in df_master.columns:
+            df_master[col] = ""
+    df_master = df_master[MASTER_COLS]
+    df_master["품번"] = _norm_code(df_master["품번"])
+
+    codes = _norm_code(df_monthly["품번"])
+    names = (
+        df_monthly["품명"].astype(str).str.strip()
+        if "품명" in df_monthly.columns else pd.Series([""] * len(codes))
+    )
+    df_pairs = pd.DataFrame({"품번": codes, "품명": names})
+    df_pairs = df_pairs[
+        (df_pairs["품번"].str.len() > 0) & (df_pairs["품번"] != "nan")
+    ].drop_duplicates(subset=["품번"], keep="first")
+
+    existing = set(df_master["품번"])
+    new_pairs = df_pairs[~df_pairs["품번"].isin(existing)].copy()
+    if len(new_pairs) == 0:
+        return 0
+
+    m = re.match(r"^(\d{4})-(\d{2})$", ym)
+    yymm = m.group(1)[2:] + m.group(2) if m else ym
+    new_pairs["하대(박스/팔레트)"] = ""
+    new_pairs["출시월"] = yymm
+    new_pairs["현재로케"] = ""
+    new_pairs = new_pairs[MASTER_COLS]
+
+    df_combined = pd.concat([df_master, new_pairs], ignore_index=True)
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df_combined.to_excel(w, sheet_name="location_master", index=False)
+    _store_master(buf.getvalue(), len(df_combined))
+    return len(new_pairs)
+
+
+def _apply_현재로케_update(update_bytes: bytes) -> dict:
+    """업로드된 (품번, 현재로케) 2컬럼 xlsx를 마스터에 반영.
+    반환: {"applied": N, "unmatched": [품번...]}"""
+    m = _fetch_master_meta()
+    if not m:
+        return {"error": "마스터가 등록되지 않았습니다. 먼저 마스터를 업로드하세요."}
+
+    try:
+        df_new = pd.read_excel(io.BytesIO(update_bytes), sheet_name=0)
+    except Exception as e:
+        return {"error": f"파일 읽기 실패: {e}"}
+    df_new.columns = [str(c).strip() for c in df_new.columns]
+    need = ["품번", "현재로케"]
+    miss = [c for c in need if c not in df_new.columns]
+    if miss:
+        return {"error": f"필수 컬럼 누락: {miss} (양식: 품번, 현재로케)"}
+
+    master_bytes = _fetch_master_bytes(m.get("updated", ""))
+    df_master = pd.read_excel(io.BytesIO(master_bytes))
+    df_master.columns = [str(c).strip() for c in df_master.columns]
+    if "품번" not in df_master.columns or "현재로케" not in df_master.columns:
+        return {"error": "마스터에 '품번' 또는 '현재로케' 컬럼이 없습니다."}
+
+    df_new = df_new[need].dropna(subset=["품번"]).copy()
+    df_new["품번"] = _norm_code(df_new["품번"])
+    df_new["현재로케"] = df_new["현재로케"].astype(str).str.strip()
+    df_new = df_new[df_new["현재로케"] != ""]
+    df_master["품번"] = _norm_code(df_master["품번"])
+
+    update_map = dict(zip(df_new["품번"], df_new["현재로케"]))
+    master_codes = set(df_master["품번"])
+    matched = set(update_map) & master_codes
+    unmatched = sorted(set(update_map) - master_codes)
+
+    if not matched:
+        return {"applied": 0, "unmatched": unmatched,
+                "error": "마스터와 일치하는 품번이 하나도 없습니다."}
+
+    mask = df_master["품번"].isin(update_map)
+    df_master.loc[mask, "현재로케"] = df_master.loc[mask, "품번"].map(update_map)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df_master.to_excel(w, sheet_name="location_master", index=False)
+    _store_master(buf.getvalue(), len(df_master))
+    return {"applied": len(matched), "unmatched": unmatched}
+
+
+def _make_현재로케_template() -> bytes:
+    """품번-현재로케 2컬럼 빈 양식 xlsx 바이트 생성."""
+    df = pd.DataFrame(columns=["품번", "현재로케"])
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, sheet_name="현재로케_업데이트", index=False)
+    return buf.getvalue()
+
+
 # ---------- UI ----------
 st.title("📊 ABC 재배치 분석")
 
@@ -185,6 +307,23 @@ if up_master:
             st.success("등록 완료")
             st.rerun()
 
+# 현재로케만 일괄 업데이트 (재배치 이동 후 반영용)
+with st.expander("🔄 현재로케만 일괄 업데이트 (품번·현재로케 2컬럼)"):
+    st.caption("실제 창고 이동 후 (품번, 새 현재로케) 목록을 업로드하면 마스터의 해당 품번의 현재로케만 갱신됩니다.")
+    st.download_button("📥 빈 양식 다운로드", data=_make_현재로케_template(),
+                       file_name="현재로케_업데이트_양식.xlsx", mime=MIME_XLSX,
+                       width='stretch', key="dl_loc_tmpl")
+    up_loc = st.file_uploader("품번-현재로케 xlsx 업로드", type=["xlsx"], key="upl_loc_update")
+    if up_loc and st.button("✓ 현재로케 갱신 적용", type="primary", width='stretch', key="btn_loc_apply"):
+        res = _apply_현재로케_update(up_loc.getvalue())
+        if res.get("error"):
+            st.error(res["error"])
+        else:
+            st.success(f"적용 {res['applied']:,}개, 미매칭 {len(res['unmatched']):,}개")
+            if res["unmatched"]:
+                st.caption("미매칭 품번 (앞 20개): " + ", ".join(res["unmatched"][:20]))
+            st.rerun()
+
 st.divider()
 
 # ────────── ② 월별 데이터 등록 ──────────
@@ -198,8 +337,12 @@ if up_month:
     if not valid:
         st.warning("YYYY-MM 형식으로 입력하세요.")
     if valid and st.button(f"✓ {ym} 로 등록/교체", type="primary", width='stretch'):
-        if _store_month(ym, up_month.getvalue()):
+        data = up_month.getvalue()
+        if _store_month(ym, data):
             st.success(f"{ym} 저장 완료")
+            n_new = _auto_add_new_items(data, ym)
+            if n_new > 0:
+                st.info(f"신규 품목 {n_new:,}건 자동 추가 (출시월 {ym.replace('-','')[-4:]} 설정)")
             st.rerun()
 
 # 등록된 월 리스트
