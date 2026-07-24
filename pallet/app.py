@@ -960,6 +960,7 @@ with st.sidebar:
 
         st.divider()
         st.markdown('**📅 유통기한 마스터** (매번 새로 업로드)')
+        st.caption('출고진행 현황 조회')
         expiry_master = st.session_state.get('expiry_master', EMPTY_EXPIRY_MASTER)
         if expiry_master.get('count'):
             st.success(
