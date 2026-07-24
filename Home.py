@@ -55,10 +55,14 @@ abc = st.Page(
     "abc_analysis/app.py", title="ABC 재배치 분석", icon="📊",
     url_path="abc",
 )
+pallet = st.Page(
+    "pallet/app.py", title="BNF 파레트 구분기", icon="🧱",
+    url_path="pallet",
+)
 
 # 기본 사이드바 네비게이션은 숨기고(아래에서 커스텀 구성) 외부 링크를 최상단에 배치
 nav = st.navigation(
-    [ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label, paint, abc],
+    [ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label, paint, abc, pallet],
     position="hidden",
 )
 
@@ -72,7 +76,7 @@ st.sidebar.link_button("🔗 입고계획 (PythonAnywhere)",
 st.sidebar.divider()
 
 # ── 페이지 메뉴 (기본 네비게이션 대체) ──
-for _p in (ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label, paint, abc):
+for _p in (ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label, paint, abc, pallet):
     st.sidebar.page_link(_p, width='stretch')
 st.sidebar.divider()
 
