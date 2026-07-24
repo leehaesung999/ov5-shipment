@@ -11,8 +11,14 @@ import io
 import re
 import sys
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+KST = timezone(timedelta(hours=9))
+
+
+def _now_kst():
+    return datetime.now(KST)
 
 import pandas as pd
 import streamlit as st
@@ -93,7 +99,7 @@ def _store_master(data: bytes, count: int):
     ok = _upsert(MASTER_B64_KEY, base64.b64encode(data).decode())
     if ok:
         _upsert(MASTER_META_KEY, {
-            "updated": datetime.now().strftime("%Y-%m-%d %H:%M"),
+            "updated": _now_kst().strftime("%Y-%m-%d %H:%M"),
             "n": int(count),
         })
     _fetch_master_bytes.clear()
@@ -418,7 +424,7 @@ meta = _fetch_master_meta()
 c1, c2 = st.columns([3, 2])
 with c1:
     if meta:
-        st.success(f"등록됨 · 마지막 업데이트 **{meta.get('updated','?')}** · {meta.get('n',0):,}품목")
+        st.success(f"등록됨 · 마지막 업데이트 **{meta.get('updated','?')} KST** · {meta.get('n',0):,}품목")
     else:
         st.warning("아직 등록되지 않았습니다.")
 with c2:
@@ -550,7 +556,7 @@ if st.button("▶ 분석 실행", type="primary", width='stretch'):
         log_lines.append(m)
 
     try:
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        ts = _now_kst().strftime("%Y%m%d_%H%M%S")
         sess = TMP / f"session_{ts}"
         (sess / "monthly").mkdir(parents=True)
         (sess / "output").mkdir()
