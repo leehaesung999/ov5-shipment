@@ -11,6 +11,7 @@
 import io
 import json
 import shutil
+import sys
 from copy import copy as _copy
 from datetime import datetime, date, time as dtime
 from pathlib import Path
@@ -19,6 +20,15 @@ import openpyxl
 import pandas as pd
 import streamlit as st
 from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
+
+# 저장소 루트(cloud_master.py 위치)를 경로에 추가 — 단독 실행/페이지 실행 모두 대응
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+try:
+    import cloud_master  # 바코드 마스터 Supabase 영구저장 (미설정 시 no-op)
+except Exception:
+    cloud_master = None
+
+BARCODE_PREFIX = 'pallet_barcode'   # Supabase app_settings 키 접두어
 
 
 APP_DIR = Path(__file__).parent
@@ -231,6 +241,13 @@ def build_excel(pallets, title_date, totals):
 
 # ---------- 바코드 마스터 관리 ----------
 def load_master():
+    # Supabase에 저장된 최신 바코드 마스터가 있으면 로컬 파일로 복원(세션당 1회) 후 읽음.
+    #   → 한 번 업로드하면 재부팅·다른 사용자에게도 계속 유지된다. 없으면 레포 기본본 사용.
+    if cloud_master is not None:
+        try:
+            cloud_master.restore_to(BARCODE_PREFIX, MASTER_FILE)
+        except Exception:
+            pass
     if MASTER_FILE.exists():
         try:
             return json.loads(MASTER_FILE.read_text(encoding='utf-8'))
@@ -246,7 +263,14 @@ def save_master(mapping, source_name):
         'count': len(mapping),
         'source_name': source_name,
     }
-    MASTER_FILE.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding='utf-8')
+    payload = json.dumps(data, ensure_ascii=False, indent=2)
+    MASTER_FILE.write_text(payload, encoding='utf-8')
+    # 클라우드에도 영구 저장 (Supabase 설정 시) → 재부팅 후에도 유지
+    if cloud_master is not None:
+        try:
+            cloud_master.store(BARCODE_PREFIX, payload.encode('utf-8'), len(mapping))
+        except Exception:
+            pass
     return data
 
 
@@ -258,7 +282,8 @@ def parse_master_excel(uploaded_file):
     ws = wb.active
 
     code_keywords = {'item code', 'itemcode', 'item_code', '품목코드', '제품코드', 'sku', 'code', '코드'}
-    bc_keywords = {'barcode', '바코드', 'gtin', 'ean', 'jan'}
+    # 'kan-code'(단품 바코드)를 우선 인식 — 같은 파일의 '물류바코드'(박스)보다 왼쪽이라 먼저 잡힘
+    bc_keywords = {'kan-code', 'kancode', 'kan code', 'barcode', '바코드', 'gtin', 'ean', 'jan'}
 
     header_row = None
     code_col = None
@@ -297,11 +322,15 @@ def parse_master_excel(uploaded_file):
         except (TypeError, ValueError):
             code_key = str(code).strip()
         bc_str = str(bc).strip()
-        if not bc_str:
-            continue
-        # 엑셀의 바코드 앞 작은따옴표 제거
+        # 엑셀의 바코드 앞 작은따옴표 제거 + 표시용 공백 제거(예: '8801005 100342')
         if bc_str.startswith("'"):
             bc_str = bc_str[1:]
+        bc_str = bc_str.replace(' ', '')
+        if not bc_str:
+            continue
+        # 제조사코드만 있고 품목자리가 빈 불완전 바코드(예: '8801005') 제외
+        if bc_str.isdigit() and len(bc_str) < 12:
+            continue
         mapping[code_key] = bc_str
 
     return mapping, header_row, code_col, bc_col
@@ -930,7 +959,10 @@ with st.sidebar:
         }
 
         st.divider()
-        st.markdown('**📚 바코드 마스터**')
+        st.markdown('**📚 바코드 마스터** (한 번 등록하면 계속 유지 · 재업로드로 갱신)')
+        _persist = cloud_master is not None and cloud_master.use_supabase()
+        st.caption('☁️ 클라우드 영구저장 — 재부팅해도 유지됩니다.' if _persist
+                   else '💾 로컬 저장 — 클라우드 미설정 시 재부팅하면 초기화될 수 있습니다.')
         master = load_master()
         if master.get('count'):
             st.success(f"등록됨: {master['count']:,}개 품목 ({master.get('source_name','-')})")
@@ -941,7 +973,8 @@ with st.sidebar:
         new_master = st.file_uploader(
             '마스터 엑셀 업로드(품목코드 + 바코드 컬럼)', type=['xlsx', 'xls'],
             key='master_uploader',
-            help='헤더에 "품목코드"와 "바코드"(또는 영문) 컬럼이 있으면 자동 인식됩니다. 업로드 후 자동 저장.',
+            help='헤더에 "품목코드"와 "바코드/Kan-Code" 컬럼이 있으면 자동 인식됩니다. '
+                 'ERP Item 원본(Item code + Kan-Code)도 그대로 업로드 가능. 업로드 즉시 갱신·영구저장.',
         )
         if new_master is not None:
             try:
