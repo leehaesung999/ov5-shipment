@@ -39,6 +39,9 @@ ITEM_FILE = DATA_DIR / 'items.json'          # 품목 기준정보 (월 1회 갱
 
 HALF = 0.5          # 하프도달 — 항상 판정 제외
 
+# 출고 기준 인벤토리 — 이 인벤토리 재고만 판정 대상(기본 출고분)으로 본다.
+SHIP_INVENTORY = 'IC930'
+
 # 채널 코드 → 정식 명칭 (화면 표기는 '풀네임(코드)')
 CHANNEL_NAMES = {
     'CVS': '편의점', 'DPS': '백화점', 'GT': '대리점', 'KAT': '대형마트',
@@ -203,6 +206,9 @@ def load_stock(file_bytes, base_day: date, item_months: dict):
         code = code_key(ws.cell(r, S_CODE).value)
         if not code:
             continue
+        inv = ws.cell(r, S_INV).value                       # 기본 출고분 = IC930만
+        if SHIP_INVENTORY and str(inv).strip() != SHIP_INVENTORY:
+            continue
         qty = to_float(ws.cell(r, S_AVAIL_BOX).value)
         if qty <= 0:
             continue
@@ -216,7 +222,6 @@ def load_stock(file_bytes, base_day: date, item_months: dict):
         if not a['name']:
             nm = ws.cell(r, S_NAME).value
             a['name'] = str(nm).strip() if nm else ''
-        inv = ws.cell(r, S_INV).value
         if inv:
             a['invs'].add(str(inv).strip())
     wb.close()
@@ -434,8 +439,9 @@ def check_orders(order_df, stock_df, need, item_names):
 
 # ─────────────────────────── UI ───────────────────────────
 st.title('📅 잔존율 출고 판정기')
-st.caption('거래처별 잔존율 기준으로 “어느 소비기한 재고로 출고해야 하는지” 판정합니다. '
-           '**매일 로케이션별 재고조회만 올리면 됩니다.**')
+st.caption(f'거래처별 잔존율 기준으로 “어느 소비기한 재고로 출고해야 하는지” 판정합니다. '
+           f'**매일 로케이션별 재고조회만 올리면 됩니다.** '
+           f'(기본 출고분 = **{SHIP_INVENTORY}** 인벤토리 재고 기준)')
 
 cust_df, cust_up = load_customers()
 item_names, item_months, item_up = load_items()
