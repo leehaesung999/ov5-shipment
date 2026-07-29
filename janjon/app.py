@@ -545,99 +545,30 @@ k2.metric('변경필요', f"{int(cnt.get('변경필요', 0)):,}")
 k3.metric('출고불가', f"{int(cnt.get('출고불가', 0)):,}")
 
 st.divider()
-st.subheader('② 결과 보기')
+st.subheader('② 로트별 지정 출고처')
 
-mode = st.radio(
-    '보기 방식',
-    ['🎯 변경필요만 (기준 때문에 로트 변경)', '🏷 로트별 지정 출고처', '📋 거래처별 상세'],
-    horizontal=True, key='view_mode')
-
-_desig_dl = build_designation(res, stock_df)     # 다운로드/뷰 공용 (캐시됨)
-
-if mode.startswith('🎯'):
-    # ── 잔존율 기준 때문에 기본 FIFO 로트로는 안 되고 더 나중 로트로 바꿔야 하는 것만 ──
-    chg = res[res['판정'] == '변경필요'].rename(columns={
-        '현재최선_소비기한': '기본출고_소비기한(FIFO)',
-        '현재최선_잔존율(%)': '기본출고_잔존율(%)',
-        '권장_소비기한': '변경출고_소비기한',
-        '권장_잔존율(%)': '변경출고_잔존율(%)',
-        '권장_출고가능(Box)': '변경출고_가능(Box)',
+_desig_dl = build_designation(res, stock_df)
+q = st.text_input('검색 (품목코드 / 품명 / 거래처)', key='q_desig')
+dview = _desig_dl
+if q:
+    s = q.strip().lower()
+    dview = dview[dview['품목코드'].str.lower().str.contains(s, na=False)
+                  | dview['품명'].str.lower().str.contains(s, na=False)
+                  | dview['★ 지정 출고처 ★'].str.lower().str.contains(s, na=False)]
+st.caption(f'표시 {len(dview):,}로트 / 전체 {len(_desig_dl):,}로트 · '
+           '이 로트(제조일자·소비기한)를 내보낼 수 있는 거래처 목록입니다. '
+           '대리점(GT)은 **“대리점”** 하나로 묶고, 나머지는 거래처명 그대로 표기합니다. '
+           '(출고불가 거래처는 제외)')
+st.dataframe(
+    dview.head(2000), width='stretch', hide_index=True,
+    column_config={
+        '제조일자': st.column_config.DateColumn('제조일자', format='YYYY-MM-DD'),
+        '소비기한': st.column_config.DateColumn('소비기한', format='YYYY-MM-DD'),
+        '★ 지정 출고처 ★': st.column_config.TextColumn(width='large'),
     })
-    cols = ['채널', '거래처', '기준잔존율(%)', '품목코드', '품명',
-            '기본출고_소비기한(FIFO)', '기본출고_잔존율(%)',
-            '변경출고_소비기한', '변경출고_잔존율(%)', '변경출고_가능(Box)']
-    chg = chg[cols]
-    q = st.text_input('검색 (거래처 / 품목코드 / 품명)', key='q_chg')
-    cview = chg
-    if q:
-        s = q.strip().lower()
-        cview = cview[cview['거래처'].str.lower().str.contains(s, na=False)
-                      | cview['품목코드'].str.lower().str.contains(s, na=False)
-                      | cview['품명'].str.lower().str.contains(s, na=False)]
-    n_out = int((res['판정'] == '출고불가').sum())
-    st.caption(f'⚠️ 잔존율 기준 때문에 **기본 출고분(IC930 최빠른 유통기한)으로는 미달이라 더 나중 로트로 '
-               f'바꿔 내보내야 하는** (거래처×품목) **{len(chg):,}건**만 표시합니다. '
-               f'정상(현행유지 {int(cnt.get("현행유지", 0)):,})은 제외. '
-               f'기준조차 만족 못 하는 출고불가 {n_out:,}건은 “거래처별 상세”에서 확인하세요.')
-    st.dataframe(
-        cview.sort_values(['거래처', '품목코드']).head(3000),
-        width='stretch', hide_index=True,
-        column_config={
-            '기본출고_소비기한(FIFO)': st.column_config.DateColumn(format='YYYY-MM-DD'),
-            '변경출고_소비기한': st.column_config.DateColumn(format='YYYY-MM-DD'),
-        })
-    if len(cview) > 3000:
-        st.caption('※ 화면에는 상위 3,000행만 표시됩니다. 전체는 아래에서 다운로드하세요.')
-    view = cview
-elif mode.startswith('🏷'):
-    # ── 로트 중심: 이 로트(제조일/소비기한)는 어느 거래처로 내보내면 되나 ──
-    desig = _desig_dl
-    q = st.text_input('검색 (품목코드 / 품명 / 거래처)', key='q_desig')
-    dview = desig
-    if q:
-        s = q.strip().lower()
-        dview = dview[dview['품목코드'].str.lower().str.contains(s, na=False)
-                      | dview['품명'].str.lower().str.contains(s, na=False)
-                      | dview['★ 지정 출고처 ★'].str.lower().str.contains(s, na=False)]
-    st.caption(f'표시 {len(dview):,}로트 / 전체 {len(desig):,}로트 · '
-               '이 로트(제조일자·소비기한)를 내보낼 수 있는 거래처 목록입니다. '
-               '대리점(GT)은 **“대리점”** 하나로 묶고, 나머지는 거래처명 그대로 표기합니다. '
-               '(출고불가 거래처는 제외)')
-    st.dataframe(
-        dview.head(2000), width='stretch', hide_index=True,
-        column_config={
-            '제조일자': st.column_config.DateColumn('제조일자', format='YYYY-MM-DD'),
-            '소비기한': st.column_config.DateColumn('소비기한', format='YYYY-MM-DD'),
-            '★ 지정 출고처 ★': st.column_config.TextColumn(width='large'),
-        })
-    if len(dview) > 2000:
-        st.caption('※ 화면에는 상위 2,000로트만 표시됩니다. 전체는 아래에서 다운로드하세요.')
-    view = res          # 다운로드용(상세)은 그대로 유지
-else:
-    fc1, fc2, fc3 = st.columns([1, 2, 2])
-    with fc1:
-        f_j = st.multiselect('판정', ['변경필요', '출고불가', '현행유지'],
-                             default=['변경필요', '출고불가'])
-    with fc2:
-        f_ch = st.multiselect('채널 (GT=대리점 등)', sorted(res['채널'].unique()), default=[])
-    with fc3:
-        q = st.text_input('검색 (거래처 / 품목코드 / 품명)')
-
-    view = res
-    if f_j:
-        view = view[view['판정'].isin(f_j)]
-    if f_ch:
-        view = view[view['채널'].isin(f_ch)]
-    if q:
-        s = q.strip().lower()
-        view = view[view['거래처'].str.lower().str.contains(s, na=False)
-                    | view['품목코드'].str.lower().str.contains(s, na=False)
-                    | view['품명'].str.lower().str.contains(s, na=False)]
-
-    st.caption(f'표시 {len(view):,}행 / 전체 {len(res):,}행')
-    st.dataframe(view.head(2000), width='stretch', hide_index=True)
-    if len(view) > 2000:
-        st.caption('※ 화면에는 상위 2,000행만 표시됩니다. 전체는 아래에서 다운로드하세요.')
+if len(dview) > 2000:
+    st.caption('※ 화면에는 상위 2,000로트만 표시됩니다. 전체는 아래에서 다운로드하세요.')
+view = dview
 
 st.divider()
 d1, d2 = st.columns(2)
