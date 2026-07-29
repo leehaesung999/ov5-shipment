@@ -16,9 +16,9 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 
-_XLSX_COLS = ["창고", "품목코드", "품목명", "등록 유통기한",
+_XLSX_COLS = ["창고", "품목코드", "품목명", "등록 유통기한", "창고입고", "리뉴얼(락)",
               "출고진행 유통기한", "최신 출고 유통기한", "상태", "비고", "담당자", "확인여부"]
-_XLSX_FILL = {"red": "FFCCCC", "orange": "FFE0B2", "": "FFFFFF"}
+_XLSX_FILL = {"red": "FFCCCC", "orange": "FFE0B2", "gray": "D9D9D9", "": "FFFFFF"}
 
 
 def build_result_xlsx(df) -> bytes:
@@ -37,7 +37,7 @@ def build_result_xlsx(df) -> bytes:
             fill = PatternFill("solid", fgColor=_XLSX_FILL.get(r.get("_color", ""), "FFFFFF"))
             for cell in ws[ws.max_row]:
                 cell.fill = fill
-    widths = [8, 11, 30, 13, 20, 16, 14, 40, 12, 8]
+    widths = [8, 11, 30, 13, 18, 22, 20, 16, 14, 40, 12, 8]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
@@ -74,11 +74,12 @@ if USE_SUPABASE:
         return create_client(_sb_url(), _sb_key())
 
 # ─── 컬럼 인덱스 ──────────────────────────────────────────────────────────
-COL_품목코드 = 4
-COL_품목명   = 5
-COL_유통기한 = 9
-COL_출고예정 = 14
-COL_LOCK    = 23
+COL_품목코드   = 4
+COL_품목명     = 5
+COL_유통기한   = 9
+COL_현재고Box = 11
+COL_출고예정   = 14
+COL_LOCK      = 23
 
 APP_DIR        = Path(__file__).parent
 WATCHLIST_FILE = APP_DIR / "watchlist.json"
@@ -261,13 +262,26 @@ def to_exp_str(raw) -> str | None:
 
 # ─── 분석 로직 ─────────────────────────────────────────────────────────────
 
-def analyze_item(df: pd.DataFrame, code: str, target_exp: str):
-    """(품목명, status, color, note, 출고중_유통기한_목록) 반환."""
+def _to_num(v) -> float:
+    try:
+        return float(str(v).replace(",", "").strip() or 0)
+    except Exception:
+        return 0.0
+
+
+def analyze_item(df: pd.DataFrame, code: str, target_exp: str) -> dict:
+    """등록 (품목,유통기한) 분석 결과 dict 반환.
+    keys: 품목명, status, color, note, 출고중, 입고, 락
+      · 입고 : 등록 유통기한 재고가 이 창고에 입고됐는지
+      · 락   : 등록 유통기한 재고가 전량 락(리뉴얼)인지 / 락 해제분이 있는지
+    """
     mask    = df.iloc[:, COL_품목코드].astype(str).str.strip() == code.strip()
     item_df = df[mask]
 
     if item_df.empty:
-        return "-", "미발견", "", "파일에서 품목을 찾을 수 없음", []
+        return {"품목명": "-", "status": "미입고", "color": "gray",
+                "note": "품목코드가 이 창고 파일에 없음", "출고중": [],
+                "입고": "❌ 미입고(품목없음)", "락": "-"}
 
     품목명 = str(item_df.iloc[0, COL_품목명])
 
@@ -276,41 +290,44 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str):
         exp = to_exp_str(row.iloc[COL_유통기한])
         if exp is None:
             continue
-        if exp not in exp_info:
-            exp_info[exp] = {"has_lock_free": False, "in_출고": False}
+        e = exp_info.setdefault(exp, {"has_lock_free": False, "in_출고": False, "qty": 0.0})
         if not has_qty(row.iloc[COL_LOCK]):
-            exp_info[exp]["has_lock_free"] = True
+            e["has_lock_free"] = True
         if has_qty(row.iloc[COL_출고예정]):
-            exp_info[exp]["in_출고"] = True
+            e["in_출고"] = True
+        e["qty"] += _to_num(row.iloc[COL_현재고Box])
 
     all_exps    = sorted(exp_info.keys())
     출고중_목록 = [e for e in all_exps if exp_info[e]["in_출고"]]
 
     if target_exp not in all_exps:
-        return 품목명, "미발견", "", f"등록 유통기한({target_exp})이 파일에 없음", 출고중_목록
+        return {"품목명": 품목명, "status": "미입고", "color": "gray",
+                "note": f"등록 유통기한({target_exp}) 재고가 이 창고에 없음", "출고중": 출고중_목록,
+                "입고": "❌ 미입고(유통기한 없음)", "락": "-"}
+
+    t = exp_info[target_exp]
+    입고 = "✅ 입고" if t["qty"] > 0 else "✅ 입고(현재고 0)"
+    락  = "🔒 전량 리뉴얼(락)" if not t["has_lock_free"] else "🔓 락 일부해제(출고가능분 있음)"
 
     idx         = all_exps.index(target_exp)
     before_exps = all_exps[:idx]
     after_exps  = all_exps[idx + 1:]
-    t           = exp_info[target_exp]
     직전        = before_exps[-1] if before_exps else None
     이후_출고   = [e for e in after_exps if exp_info[e]["in_출고"]]
 
     if 이후_출고:
-        return 품목명, "위험", "red", f"이후 유통기한 출고진행 중: {', '.join(이후_출고)}", 출고중_목록
+        status, color, note = "위험", "red", f"이후 유통기한 출고진행 중: {', '.join(이후_출고)}"
+    elif t["in_출고"]:
+        status, color, note = "주의(락 점검)", "orange", f"동일 유통기한({target_exp}) 출고진행 중"
+    elif not t["has_lock_free"] and 직전 and exp_info[직전]["in_출고"]:
+        status, color, note = ("주의(락 점검)", "orange",
+                               f"직전 유통기한({직전}) 출고진행 중  /  락 없는 동일 유통기한 재고 없음")
+    else:
+        status, color = "정상", ""
+        note = "락 없는 동일 유통기한 재고 있음" if t["has_lock_free"] else "출고진행 없음"
 
-    if t["in_출고"]:
-        return 품목명, "주의(락 점검)", "orange", f"동일 유통기한({target_exp}) 출고진행 중", 출고중_목록
-
-    if not t["has_lock_free"] and 직전 and exp_info[직전]["in_출고"]:
-        return (
-            품목명, "주의(락 점검)", "orange",
-            f"직전 유통기한({직전}) 출고진행 중  /  락 없는 동일 유통기한 재고 없음",
-            출고중_목록,
-        )
-
-    note = "락 없는 동일 유통기한 재고 있음" if t["has_lock_free"] else "출고진행 없음"
-    return 품목명, "정상", "", note, 출고중_목록
+    return {"품목명": 품목명, "status": status, "color": color, "note": note,
+            "출고중": 출고중_목록, "입고": 입고, "락": 락}
 
 
 # ─── UI ───────────────────────────────────────────────────────────────────
@@ -425,23 +442,22 @@ if uploaded:
             for wh in sel_whs:
                 df_wh = df[df.iloc[:, 0].astype(str).str.strip() == wh]
                 for item in wl:
-                    품목명, status, color, note, 출고중 = analyze_item(
-                        df_wh, str(item["code"]), str(item["expiry"])
-                    )
-                    if status == "미발견":
-                        continue  # 그 창고 파일에 품목/유통기한 없으면 제외
+                    a = analyze_item(df_wh, str(item["code"]), str(item["expiry"]))
+                    출고중 = a["출고중"]
                     rows.append(
                         {
                             "창고":            wh,
                             "품목코드":         str(item["code"]),
-                            "품목명":           품목명,
+                            "품목명":           a["품목명"],
                             "등록 유통기한":     str(item["expiry"]),
+                            "창고입고":         a["입고"],
+                            "리뉴얼(락)":       a["락"],
                             "출고진행 유통기한":  ", ".join(출고중) if 출고중 else "-",
                             "최신 출고 유통기한": max(출고중) if 출고중 else "-",
-                            "상태":            status,
-                            "비고":            note,
+                            "상태":            a["status"],
+                            "비고":            a["note"],
                             "담당자":          dam_map.get(str(item["code"]).strip(), ""),
-                            "_color":          color,
+                            "_color":          a["color"],
                         }
                     )
 
@@ -449,16 +465,20 @@ if uploaded:
         if result_df.empty:
             st.info("선택한 창고에서 등록 품목을 찾지 못했습니다. 창고 체크를 확인하세요.")
             st.stop()
-        BG = {"red": "#FFCCCC", "orange": "#FFE0B2", "": "#FFFFFF"}
+        BG = {"red": "#FFCCCC", "orange": "#FFE0B2", "gray": "#E0E0E0", "": "#FFFFFF"}
 
         # 전체 요약
-        c1, c2, c3 = st.columns(3)
-        c1.metric("🔴 위험", int((result_df["_color"] == "red").sum()),
+        _n_reg = len(wl) * len(sel_whs)
+        _n_in  = int((result_df["창고입고"].astype(str).str.startswith("✅")).sum())
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("📦 창고입고", f"{_n_in}/{_n_reg}",
+                  help="등록(품목×창고) 중 해당 유통기한 재고가 입고된 건")
+        c2.metric("🔴 위험", int((result_df["_color"] == "red").sum()),
                   help="이후 유통기한 출고진행 중")
-        c2.metric("🟠 주의", int((result_df["_color"] == "orange").sum()),
+        c3.metric("🟠 주의", int((result_df["_color"] == "orange").sum()),
                   help="동일/직전 유통기한 출고진행 중")
-        c3.metric("✅ 정상", int((result_df["_color"] == "").sum()),
-                  help="락 없는 동일 유통기한 재고 있음")
+        c4.metric("❌ 미입고", int((result_df["_color"] == "gray").sum()),
+                  help="품목/등록 유통기한 재고가 이 창고에 없음")
 
         # ── 확인 체크 로드 (+ 엑셀용 확인여부 열) ──
         checks = load_checks()
@@ -472,11 +492,11 @@ if uploaded:
         # 비정상만 보기 / 확인완료 숨기기 / 엑셀 다운로드
         _f1, _f2, _f3 = st.columns([2, 2, 2])
         with _f1:
-            abn_only = st.toggle("⚠ 비정상(위험·주의)만 보기", value=False)
+            abn_only = st.toggle("⚠ 비정상(위험·주의·미입고)만 보기", value=False)
         with _f2:
             hide_checked = st.toggle("✔ 확인완료 숨기기", value=False,
                                      help="이미 확인(체크)한 항목을 목록에서 숨겨 반복 작업 방지")
-        view_df = (result_df[result_df["_color"].isin(["red", "orange"])]
+        view_df = (result_df[result_df["_color"].isin(["red", "orange", "gray"])]
                    if abn_only else result_df)
         with _f3:
             st.download_button(
@@ -491,8 +511,8 @@ if uploaded:
         st.caption("✔ '확인' 열을 체크하면 저장되어, 다음에 다시 분석해도 유지됩니다 (동일 작업 반복 방지).")
         st.subheader("📊 분석 결과 (창고별)")
 
-        _SEV = {"red": 0, "orange": 1, "": 2}
-        _EMO = {"red": "🔴", "orange": "🟠", "": "✅"}
+        _SEV = {"red": 0, "orange": 1, "": 2, "gray": 3}
+        _EMO = {"red": "🔴", "orange": "🟠", "": "✅", "gray": "❌"}
         for wh in sel_whs:
             wh_df = view_df[view_df["창고"] == wh].copy()
             if wh_df.empty:
@@ -516,7 +536,8 @@ if uploaded:
             _r = int((wh_df["_color"] == "red").sum())
             _o = int((wh_df["_color"] == "orange").sum())
             _k = int((wh_df["_color"] == "").sum())
-            st.markdown(f"#### 🏬 {wh}  —  🔴 위험 {_r} · 🟠 주의 {_o} · ✅ 정상 {_k}")
+            _m = int((wh_df["_color"] == "gray").sum())
+            st.markdown(f"#### 🏬 {wh}  —  🔴 위험 {_r} · 🟠 주의 {_o} · ✅ 정상 {_k} · ❌ 미입고 {_m}")
             disp = wh_df.drop(columns=["_color", "창고", "확인여부"]).copy()
             disp["상태"] = [f'{_EMO.get(c, "")} {s}'
                           for c, s in zip(wh_df["_color"], wh_df["상태"])]
@@ -551,6 +572,11 @@ if uploaded:
 | 🔴 빨간 (위험) — 역순출고 우려 | 등록 유통기한보다 **이후** 유통기한이 출고 진행 중 |
 | 🟠 주황 (주의) — 신규파우치 출고 임박 (락해제 점검 필요) | **동일** 유통기한 출고 진행 중  ·  또는  ·  락 없는 동일 유통기한 재고 없고 **직전** 유통기한 출고 진행 중 |
 | ⬜ 색 없음 (정상) | 락 없는 동일 유통기한 재고 있음 |
+| ⬛ 회색 (미입고) | 등록 품목/유통기한 재고가 이 창고에 **없음** |
+
+**추가 열**
+- **창고입고** : 등록 (품목·유통기한) 재고가 이 창고에 입고됐는지 (✅ 입고 / ❌ 미입고)
+- **리뉴얼(락)** : 등록 유통기한 재고가 🔒 **전량 리뉴얼(락)** 인지, 🔓 **락 일부해제(출고가능분 있음)** 인지
         """)
 
         st.markdown("""
