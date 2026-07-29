@@ -56,8 +56,10 @@ def ch_disp(ch):
     return f'{full}({ch})' if full else str(ch)
 
 
-# 지정 출고처 표기 시 개별 거래처 대신 채널명 하나로 묶을 채널 (대리점=GT)
-COLLAPSE_CHANNELS = {'GT'}
+# 지정 출고처 표기 시 개별 거래처 대신 채널명 하나로 묶을 채널.
+# 채널 안에서 잔존율 기준이 '통일'된 곳만 안전하게 묶는다(항상 같은 로트로 나감).
+# GT(대리점 75%), DPS(백화점 70%)만 통일. 나머지는 기준 혼재라 개별 표기.
+COLLAPSE_CHANNELS = {'GT', 'DPS'}
 
 
 def base_cust_name(s):
