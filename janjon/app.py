@@ -56,6 +56,10 @@ def ch_disp(ch):
     return f'{full}({ch})' if full else str(ch)
 
 
+# 지정 출고처 표기 시 개별 거래처 대신 채널명 하나로 묶을 채널 (대리점=GT)
+COLLAPSE_CHANNELS = {'GT'}
+
+
 # ─────────────────────────── 공통 유틸 ───────────────────────────
 def to_date(v):
     """20280722 / '2028-07-22' / datetime → date. 실패 시 None."""
@@ -326,36 +330,25 @@ def build_designation(result_df, stock_df):
         return result_df
     df = result_df[result_df['권장_소비기한'].notna()]
 
-    # 로트 (품목,소비기한) → 제조일 / 출고가능(Box)
-    mfg_map, box_map = {}, {}
+    # 로트 (품목,소비기한) → 제조일
+    mfg_map = {}
     for _, s in stock_df.iterrows():
-        key = (s['품목코드'], s['소비기한'])
-        mfg_map[key] = s['제조일']
-        box_map[key] = s['출고가능(Box)']
-
-    # 품목별로 한 채널이 몇 개 로트로 갈라지는지 (1이면 통째 → 채널명으로 축약,
-    # 2 이상이면 기준이 갈려 일부만 이 로트로 → 그 거래처만 개별 표기)
-    span = df.groupby(['품목코드', '채널'])['권장_소비기한'].nunique()
+        mfg_map[(s['품목코드'], s['소비기한'])] = s['제조일']
 
     rows = []
     for (code, exp), g in df.groupby(['품목코드', '권장_소비기한'], sort=False):
-        chan_parts, cust_parts = [], []
+        cust_parts, collapsed = [], []
         for ch, gch in g.groupby('채널', sort=True):
-            names = sorted(gch['거래처'].tolist())
-            if span.loc[(code, ch)] == 1:          # 채널 전체가 이 로트 하나로
-                chan_parts.append(f'{ch_disp(ch)} {len(names)}곳')
-            else:                                   # 채널이 갈림 → 해당 거래처만 개별
-                cust_parts.extend(f'{ch_disp(ch)}·{n}' for n in names)
+            if ch in COLLAPSE_CHANNELS:            # 대리점(GT)은 하나로 묶기
+                collapsed.append(CHANNEL_NAMES.get(ch, ch))
+            else:                                   # 나머지는 거래처명 그대로
+                cust_parts.extend(sorted(gch['거래처'].tolist()))
         rows.append({
             '품목코드': code,
             '품명': g['품명'].iloc[0],
-            '제조일': mfg_map.get((code, exp)),
+            '제조일자': mfg_map.get((code, exp)),
             '소비기한': exp,
-            '잔존율(%)': g['권장_잔존율(%)'].iloc[0],
-            '출고가능(Box)': box_map.get((code, exp)),
-            '지정처수': len(g),
-            '★ 지정 출고처 ★': ', '.join(chan_parts + cust_parts),
-            '거래처(개별)': ', '.join(sorted(g['거래처'].tolist())),
+            '★ 지정 출고처 ★': ', '.join(cust_parts + collapsed),
         })
     out = pd.DataFrame(rows)
     return out.sort_values(['품목코드', '소비기한']).reset_index(drop=True) if not out.empty else out
@@ -599,26 +592,23 @@ if mode.startswith('🎯'):
 elif mode.startswith('🏷'):
     # ── 로트 중심: 이 로트(제조일/소비기한)는 어느 거래처로 내보내면 되나 ──
     desig = _desig_dl
-    q = st.text_input('검색 (품목코드 / 품명 / 채널 / 거래처)', key='q_desig')
+    q = st.text_input('검색 (품목코드 / 품명 / 거래처)', key='q_desig')
     dview = desig
     if q:
         s = q.strip().lower()
         dview = dview[dview['품목코드'].str.lower().str.contains(s, na=False)
                       | dview['품명'].str.lower().str.contains(s, na=False)
-                      | dview['★ 지정 출고처 ★'].str.lower().str.contains(s, na=False)
-                      | dview['거래처(개별)'].str.lower().str.contains(s, na=False)]
+                      | dview['★ 지정 출고처 ★'].str.lower().str.contains(s, na=False)]
     st.caption(f'표시 {len(dview):,}로트 / 전체 {len(desig):,}로트 · '
-               '지정 출고처는 **채널명(곳수)** 으로 묶어 표기하고, '
-               '채널 안에서 기준이 갈려 일부만 이 로트로 가는 경우엔 `채널·거래처` 로 개별 표기합니다. '
-               '(전체 거래처명은 “거래처(개별)” 칸 참고 · 출고불가 거래처는 제외)')
+               '이 로트(제조일자·소비기한)를 내보낼 수 있는 거래처 목록입니다. '
+               '대리점(GT)은 **“대리점”** 하나로 묶고, 나머지는 거래처명 그대로 표기합니다. '
+               '(출고불가 거래처는 제외)')
     st.dataframe(
         dview.head(2000), width='stretch', hide_index=True,
         column_config={
-            '제조일': st.column_config.DateColumn('제조일자', format='YYYY-MM-DD'),
+            '제조일자': st.column_config.DateColumn('제조일자', format='YYYY-MM-DD'),
             '소비기한': st.column_config.DateColumn('소비기한', format='YYYY-MM-DD'),
-            '잔존율(%)': st.column_config.NumberColumn(format='%.1f'),
             '★ 지정 출고처 ★': st.column_config.TextColumn(width='large'),
-            '거래처(개별)': st.column_config.TextColumn('거래처(개별)', width='medium'),
         })
     if len(dview) > 2000:
         st.caption('※ 화면에는 상위 2,000로트만 표시됩니다. 전체는 아래에서 다운로드하세요.')
