@@ -555,12 +555,50 @@ st.divider()
 st.subheader('② 결과 보기')
 
 mode = st.radio(
-    '보기 방식', ['🏷 로트별 지정 출고처 (간단)', '📋 거래처별 상세'],
+    '보기 방식',
+    ['🎯 변경필요만 (기준 때문에 로트 변경)', '🏷 로트별 지정 출고처', '📋 거래처별 상세'],
     horizontal=True, key='view_mode')
 
-if mode.startswith('🏷'):
+_desig_dl = build_designation(res, stock_df)     # 다운로드/뷰 공용 (캐시됨)
+
+if mode.startswith('🎯'):
+    # ── 잔존율 기준 때문에 기본 FIFO 로트로는 안 되고 더 나중 로트로 바꿔야 하는 것만 ──
+    chg = res[res['판정'] == '변경필요'].rename(columns={
+        '현재최선_소비기한': '기본출고_소비기한(FIFO)',
+        '현재최선_잔존율(%)': '기본출고_잔존율(%)',
+        '권장_소비기한': '변경출고_소비기한',
+        '권장_잔존율(%)': '변경출고_잔존율(%)',
+        '권장_출고가능(Box)': '변경출고_가능(Box)',
+    })
+    cols = ['채널', '거래처', '기준잔존율(%)', '품목코드', '품명',
+            '기본출고_소비기한(FIFO)', '기본출고_잔존율(%)',
+            '변경출고_소비기한', '변경출고_잔존율(%)', '변경출고_가능(Box)']
+    chg = chg[cols]
+    q = st.text_input('검색 (거래처 / 품목코드 / 품명)', key='q_chg')
+    cview = chg
+    if q:
+        s = q.strip().lower()
+        cview = cview[cview['거래처'].str.lower().str.contains(s, na=False)
+                      | cview['품목코드'].str.lower().str.contains(s, na=False)
+                      | cview['품명'].str.lower().str.contains(s, na=False)]
+    n_out = int((res['판정'] == '출고불가').sum())
+    st.caption(f'⚠️ 잔존율 기준 때문에 **기본 출고분(IC930 최빠른 유통기한)으로는 미달이라 더 나중 로트로 '
+               f'바꿔 내보내야 하는** (거래처×품목) **{len(chg):,}건**만 표시합니다. '
+               f'정상(현행유지 {int(cnt.get("현행유지", 0)):,})은 제외. '
+               f'기준조차 만족 못 하는 출고불가 {n_out:,}건은 “거래처별 상세”에서 확인하세요.')
+    st.dataframe(
+        cview.sort_values(['거래처', '품목코드']).head(3000),
+        width='stretch', hide_index=True,
+        column_config={
+            '기본출고_소비기한(FIFO)': st.column_config.DateColumn(format='YYYY-MM-DD'),
+            '변경출고_소비기한': st.column_config.DateColumn(format='YYYY-MM-DD'),
+        })
+    if len(cview) > 3000:
+        st.caption('※ 화면에는 상위 3,000행만 표시됩니다. 전체는 아래에서 다운로드하세요.')
+    view = cview
+elif mode.startswith('🏷'):
     # ── 로트 중심: 이 로트(제조일/소비기한)는 어느 거래처로 내보내면 되나 ──
-    desig = build_designation(res, stock_df)
+    desig = _desig_dl
     q = st.text_input('검색 (품목코드 / 품명 / 채널 / 거래처)', key='q_desig')
     dview = desig
     if q:
@@ -585,7 +623,6 @@ if mode.startswith('🏷'):
     if len(dview) > 2000:
         st.caption('※ 화면에는 상위 2,000로트만 표시됩니다. 전체는 아래에서 다운로드하세요.')
     view = res          # 다운로드용(상세)은 그대로 유지
-    _desig_dl = desig
 else:
     fc1, fc2, fc3 = st.columns([1, 2, 2])
     with fc1:
@@ -611,11 +648,12 @@ else:
     st.dataframe(view.head(2000), width='stretch', hide_index=True)
     if len(view) > 2000:
         st.caption('※ 화면에는 상위 2,000행만 표시됩니다. 전체는 아래에서 다운로드하세요.')
-    _desig_dl = build_designation(res, stock_df)
 
 st.divider()
 d1, d2 = st.columns(2)
-_sheets = [('로트별_지정출고처', _desig_dl), ('판정결과(상세)', res),
+_sheets = [('변경필요', res[res['판정'] == '변경필요']),
+           ('출고불가', res[res['판정'] == '출고불가']),
+           ('로트별_지정출고처', _desig_dl), ('판정결과(상세)', res),
            ('거래처기준', cust_df), ('재고로트', stock_df)]
 if not expired_df.empty:
     _sheets.append(('기한경과(제외)', expired_df))
