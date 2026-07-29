@@ -320,15 +320,16 @@ def build_result(cust_df, stock_df, item_names):
 
 @st.cache_data(show_spinner=False)
 def build_designation(result_df, stock_df):
-    """로트(품목 × 소비기한)별 '지정 출고처' 목록 — build_result 를 뒤집는다.
+    """로트(품목 × 소비기한)별 '지정 출고처' 목록 — 변경필요 건만 뒤집는다.
 
-    각 거래처는 자기 기준을 만족하는 '가장 빠른 소비기한'(권장 로트) 아래에
-    딱 한 번씩 들어간다. 출고불가(권장 로트 없음)는 어디에도 넣지 않는다.
-    → 창고에서 "이 로트는 이 거래처들로 내보내면 된다" 를 바로 읽을 수 있다.
+    기본 출고분(IC930 최빠른 유통기한)이 그 거래처 기준에 미달이라
+    '더 나중 유통기한 로트로 바꿔 내보내야 하는'(변경필요) 거래처만 모은다.
+    → "이 로트(더 나중 유통기한)는 이 거래처들로 내보내야 한다" 를 바로 읽을 수 있다.
+    정상(현행유지)·출고불가는 제외한다.
     """
     if result_df.empty:
         return result_df
-    df = result_df[result_df['권장_소비기한'].notna()]
+    df = result_df[result_df['판정'] == '변경필요']
 
     # 로트 (품목,소비기한) → 제조일
     mfg_map = {}
@@ -545,7 +546,7 @@ k2.metric('변경필요', f"{int(cnt.get('변경필요', 0)):,}")
 k3.metric('출고불가', f"{int(cnt.get('출고불가', 0)):,}")
 
 st.divider()
-st.subheader('② 로트별 지정 출고처')
+st.subheader('② 지정 출고 대상 (기준 미달 → 유통기한 변경)')
 
 _desig_dl = build_designation(res, stock_df)
 q = st.text_input('검색 (품목코드 / 품명 / 거래처)', key='q_desig')
@@ -556,9 +557,9 @@ if q:
                   | dview['품명'].str.lower().str.contains(s, na=False)
                   | dview['★ 지정 출고처 ★'].str.lower().str.contains(s, na=False)]
 st.caption(f'표시 {len(dview):,}로트 / 전체 {len(_desig_dl):,}로트 · '
-           '이 로트(제조일자·소비기한)를 내보낼 수 있는 거래처 목록입니다. '
-           '대리점(GT)은 **“대리점”** 하나로 묶고, 나머지는 거래처명 그대로 표기합니다. '
-           '(출고불가 거래처는 제외)')
+           '**정상출고(FIFO로 그냥 나가도 되는 품목)는 제외**하고, 잔존율 기준 미달로 '
+           '**이 로트(더 나중 유통기한)로 바꿔 내보내야 하는 거래처**만 표시합니다. '
+           '대리점(GT)은 **“대리점”** 하나로 묶고, 나머지는 거래처명 그대로 표기합니다.')
 st.dataframe(
     dview.head(2000), width='stretch', hide_index=True,
     column_config={
