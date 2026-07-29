@@ -60,6 +60,14 @@ def ch_disp(ch):
 COLLAPSE_CHANNELS = {'GT'}
 
 
+def base_cust_name(s):
+    """거래처명 뒤의 괄호 구분자를 떼어 대표명으로. 예:
+    '신세계백화점(특정)'·'신세계백화점(햅스토어)' → '신세계백화점',
+    '롯데마트(창고형)'·'롯데마트(할인점)' → '롯데마트'.
+    맨 앞이 '(주)' 처럼 괄호로 시작하는 건 건드리지 않는다(끝의 괄호만)."""
+    return re.sub(r'\s*\(.*\)\s*$', '', str(s)).strip() or str(s).strip()
+
+
 # ─────────────────────────── 공통 유틸 ───────────────────────────
 def to_date(v):
     """20280722 / '2028-07-22' / datetime → date. 실패 시 None."""
@@ -338,12 +346,13 @@ def build_designation(result_df, stock_df):
 
     rows = []
     for (code, exp), g in df.groupby(['품목코드', '권장_소비기한'], sort=False):
-        cust_parts, collapsed = [], []
+        cust_parts, collapsed = set(), []
         for ch, gch in g.groupby('채널', sort=True):
             if ch in COLLAPSE_CHANNELS:            # 대리점(GT)은 하나로 묶기
                 collapsed.append(CHANNEL_NAMES.get(ch, ch))
-            else:                                   # 나머지는 거래처명 그대로
-                cust_parts.extend(sorted(gch['거래처'].tolist()))
+            else:                                   # 나머지는 대표명으로 병합
+                cust_parts.update(base_cust_name(n) for n in gch['거래처'])
+        cust_parts = sorted(cust_parts)
         rows.append({
             '품목코드': code,
             '품명': g['품명'].iloc[0],
