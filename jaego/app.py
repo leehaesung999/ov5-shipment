@@ -16,7 +16,7 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from openpyxl.utils import get_column_letter
 
 
-_XLSX_COLS = ["창고", "품목코드", "품목명", "등록 유통기한", "창고입고", "리뉴얼(락)",
+_XLSX_COLS = ["창고", "품목코드", "품목명", "등록 유통기한", "리뉴얼구분", "창고입고", "리뉴얼(락)",
               "출고진행 유통기한", "최신 출고 유통기한", "상태", "비고", "담당자", "확인여부"]
 _XLSX_FILL = {"red": "FFCCCC", "orange": "FFE0B2", "gray": "D9D9D9", "": "FFFFFF"}
 
@@ -37,7 +37,7 @@ def build_result_xlsx(df) -> bytes:
             fill = PatternFill("solid", fgColor=_XLSX_FILL.get(r.get("_color", ""), "FFFFFF"))
             for cell in ws[ws.max_row]:
                 cell.fill = fill
-    widths = [8, 11, 30, 13, 18, 22, 20, 16, 14, 40, 12, 8]
+    widths = [8, 11, 30, 13, 10, 18, 24, 20, 16, 14, 40, 12, 8]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
@@ -242,6 +242,58 @@ def set_check(key: str, checked: bool) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+# ─── 리뉴얼 구분(전량/부분) — watchlist 스키마 변경 없이 app_settings에 저장 ──
+
+SCOPES_FILE = APP_DIR / "scopes.json"
+SCOPES_KEY  = "jaego_scopes"
+
+
+def _scope_key(code: str, expiry: str) -> str:
+    return f"{str(code).strip()}|{str(expiry).strip()}"
+
+
+def load_scopes() -> dict:
+    """{code|expiry: '전량'|'부분'} — 등록 시 지정한 리뉴얼 구분."""
+    cli = _settings_client()
+    if cli is not None:
+        try:
+            r = cli.table("app_settings").select("value").eq("key", SCOPES_KEY).execute()
+            return (r.data[0].get("value") or {}) if r.data else {}
+        except Exception:
+            pass
+    if SCOPES_FILE.exists():
+        try:
+            with open(SCOPES_FILE, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            return {}
+    return {}
+
+
+def set_scope(key: str, scope: str) -> None:
+    cli = _settings_client()
+    if cli is not None:
+        try:
+            r = cli.table("app_settings").select("value").eq("key", SCOPES_KEY).execute()
+            cur = (r.data[0].get("value") or {}) if r.data else {}
+            if scope:
+                cur[key] = scope
+            else:
+                cur.pop(key, None)
+            cli.table("app_settings").upsert(
+                {"key": SCOPES_KEY, "value": cur}, on_conflict="key").execute()
+            return
+        except Exception:
+            pass
+    data = load_scopes()
+    if scope:
+        data[key] = scope
+    else:
+        data.pop(key, None)
+    with open(SCOPES_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
+
+
 # ─── 수량 파싱 ─────────────────────────────────────────────────────────────
 
 def has_qty(val) -> bool:
@@ -269,11 +321,12 @@ def _to_num(v) -> float:
         return 0.0
 
 
-def analyze_item(df: pd.DataFrame, code: str, target_exp: str) -> dict:
+def analyze_item(df: pd.DataFrame, code: str, target_exp: str, scope: str = "미지정") -> dict:
     """등록 (품목,유통기한) 분석 결과 dict 반환.
-    keys: 품목명, status, color, note, 출고중, 입고, 락
-      · 입고 : 등록 유통기한 재고가 이 창고에 입고됐는지
-      · 락   : 등록 유통기한 재고가 전량 락(리뉴얼)인지 / 락 해제분이 있는지
+    keys: 품목명, status, color, note, 출고중, 입고, 락, 락누락
+      · 입고   : 등록 유통기한 재고가 이 창고에 입고됐는지
+      · 락     : 리뉴얼 구분(전량/부분)에 비춰 본 락 상태
+      · 락누락 : 전량으로 등록됐는데 락 안 걸린 재고가 있으면 True
     """
     mask    = df.iloc[:, COL_품목코드].astype(str).str.strip() == code.strip()
     item_df = df[mask]
@@ -281,7 +334,7 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str) -> dict:
     if item_df.empty:
         return {"품목명": "-", "status": "미입고", "color": "gray",
                 "note": "품목코드가 이 창고 파일에 없음", "출고중": [],
-                "입고": "❌ 미입고(품목없음)", "락": "-"}
+                "입고": "❌ 미입고(품목없음)", "락": "-", "락누락": False}
 
     품목명 = str(item_df.iloc[0, COL_품목명])
 
@@ -303,11 +356,21 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str) -> dict:
     if target_exp not in all_exps:
         return {"품목명": 품목명, "status": "미입고", "color": "gray",
                 "note": f"등록 유통기한({target_exp}) 재고가 이 창고에 없음", "출고중": 출고중_목록,
-                "입고": "❌ 미입고(유통기한 없음)", "락": "-"}
+                "입고": "❌ 미입고(유통기한 없음)", "락": "-", "락누락": False}
 
     t = exp_info[target_exp]
     입고 = "✅ 입고" if t["qty"] > 0 else "✅ 입고(현재고 0)"
-    락  = "🔒 전량 리뉴얼(락)" if not t["has_lock_free"] else "🔓 락 일부해제(출고가능분 있음)"
+    has_free = t["has_lock_free"]           # 락 안 걸린(출고가능) 재고 존재 여부
+    락누락 = False
+    if scope == "전량":
+        if has_free:
+            락, 락누락 = "🔴 락 누락 의심 (전량인데 미락 재고 있음)", True
+        else:
+            락 = "🔒 전량 락 (정상)"
+    elif scope == "부분":
+        락 = "🔓 부분 (락 해제분 정상)" if has_free else "🔒 전량 락"
+    else:  # 미지정 — 구분 등록 안 됨
+        락 = "🔒 전량 락" if not has_free else "🔓 락 일부해제"
 
     idx         = all_exps.index(target_exp)
     before_exps = all_exps[:idx]
@@ -327,7 +390,7 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str) -> dict:
         note = "락 없는 동일 유통기한 재고 있음" if t["has_lock_free"] else "출고진행 없음"
 
     return {"품목명": 품목명, "status": status, "color": color, "note": note,
-            "출고중": 출고중_목록, "입고": 입고, "락": 락}
+            "출고중": 출고중_목록, "입고": 입고, "락": 락, "락누락": 락누락}
 
 
 # ─── UI ───────────────────────────────────────────────────────────────────
@@ -368,31 +431,41 @@ if show_register:
             with st.form("add_form", clear_on_submit=True):
                 inp_code   = st.text_input("품목코드", placeholder="예: 2061438")
                 inp_expiry = st.text_input("유통기한 (YYYYMMDD)", placeholder="예: 20270827")
+                inp_scope  = st.radio(
+                    "리뉴얼 구분", ["전량", "부분"], horizontal=True,
+                    help="전량 = 이 유통기한 재고 전부를 락 걸어야 함(락 누락 감지). "
+                         "부분 = 일부만 신규 파우치라 락 해제분이 있어도 정상")
                 submitted  = st.form_submit_button("➕ 등록", width='stretch')
 
             if submitted:
                 if inp_code and inp_expiry:
                     ok = add_item(inp_code.strip(), inp_expiry.strip())
+                    set_scope(_scope_key(inp_code, inp_expiry), inp_scope)  # 구분은 항상 최신값 저장
                     if ok:
-                        st.success(f"등록 완료: **{inp_code.strip()}** / `{inp_expiry.strip()}`")
+                        st.success(f"등록 완료: **{inp_code.strip()}** / `{inp_expiry.strip()}` · {inp_scope}")
                         st.rerun()
                     else:
-                        st.warning("이미 등록된 항목입니다")
+                        st.warning(f"이미 등록된 항목입니다 (리뉴얼 구분은 **{inp_scope}** 로 갱신됨)")
+                        st.rerun()
                 else:
                     st.error("품목코드와 유통기한을 모두 입력해주세요")
 
         # 삭제
         with right:
             wl = load_watchlist()
+            _scopes = load_scopes()
             if not wl:
                 st.info("등록된 품목이 없습니다")
             else:
-                st.markdown("**등록 목록** (🗑 클릭 시 삭제)")
+                st.markdown("**등록 목록** (구분 미지정은 재등록해 지정하세요 · 🗑 삭제)")
                 for item in wl:
+                    sc = _scopes.get(_scope_key(item["code"], item["expiry"]), "미지정")
+                    _badge = {"전량": "🔒 전량", "부분": "🔓 부분"}.get(sc, "⚪ 미지정")
                     c1, c2 = st.columns([5, 1])
-                    c1.markdown(f"**{item['code']}** &nbsp; `{item['expiry']}`")
+                    c1.markdown(f"**{item['code']}** &nbsp; `{item['expiry']}` &nbsp; {_badge}")
                     if c2.button("🗑", key=f"del_{item['id']}"):
                         delete_item(item["id"])
+                        set_scope(_scope_key(item["code"], item["expiry"]), "")  # 구분도 삭제
                         st.rerun()
 
 st.divider()
@@ -437,12 +510,14 @@ if uploaded:
             sel_whs = _whs_all
         if not sel_whs:
             sel_whs = _whs_all
+        scope_map = load_scopes()
         with st.spinner("분석 중..."):
             rows = []
             for wh in sel_whs:
                 df_wh = df[df.iloc[:, 0].astype(str).str.strip() == wh]
                 for item in wl:
-                    a = analyze_item(df_wh, str(item["code"]), str(item["expiry"]))
+                    sc = scope_map.get(_scope_key(item["code"], item["expiry"]), "미지정")
+                    a = analyze_item(df_wh, str(item["code"]), str(item["expiry"]), sc)
                     출고중 = a["출고중"]
                     rows.append(
                         {
@@ -450,6 +525,7 @@ if uploaded:
                             "품목코드":         str(item["code"]),
                             "품목명":           a["품목명"],
                             "등록 유통기한":     str(item["expiry"]),
+                            "리뉴얼구분":       sc,
                             "창고입고":         a["입고"],
                             "리뉴얼(락)":       a["락"],
                             "출고진행 유통기한":  ", ".join(출고중) if 출고중 else "-",
@@ -458,6 +534,7 @@ if uploaded:
                             "비고":            a["note"],
                             "담당자":          dam_map.get(str(item["code"]).strip(), ""),
                             "_color":          a["color"],
+                            "_lockmiss":       a["락누락"],
                         }
                     )
 
@@ -470,14 +547,16 @@ if uploaded:
         # 전체 요약
         _n_reg = len(wl) * len(sel_whs)
         _n_in  = int((result_df["창고입고"].astype(str).str.startswith("✅")).sum())
-        c1, c2, c3, c4 = st.columns(4)
+        c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("📦 창고입고", f"{_n_in}/{_n_reg}",
                   help="등록(품목×창고) 중 해당 유통기한 재고가 입고된 건")
-        c2.metric("🔴 위험", int((result_df["_color"] == "red").sum()),
+        c2.metric("🔴 락누락", int(result_df["_lockmiss"].sum()),
+                  help="전량 등록인데 락 안 걸린 재고가 있음 — 락 확인 필요")
+        c3.metric("🔴 위험", int((result_df["_color"] == "red").sum()),
                   help="이후 유통기한 출고진행 중")
-        c3.metric("🟠 주의", int((result_df["_color"] == "orange").sum()),
+        c4.metric("🟠 주의", int((result_df["_color"] == "orange").sum()),
                   help="동일/직전 유통기한 출고진행 중")
-        c4.metric("❌ 미입고", int((result_df["_color"] == "gray").sum()),
+        c5.metric("❌ 미입고", int((result_df["_color"] == "gray").sum()),
                   help="품목/등록 유통기한 재고가 이 창고에 없음")
 
         # ── 확인 체크 로드 (+ 엑셀용 확인여부 열) ──
@@ -492,11 +571,12 @@ if uploaded:
         # 비정상만 보기 / 확인완료 숨기기 / 엑셀 다운로드
         _f1, _f2, _f3 = st.columns([2, 2, 2])
         with _f1:
-            abn_only = st.toggle("⚠ 비정상(위험·주의·미입고)만 보기", value=False)
+            abn_only = st.toggle("⚠ 비정상(위험·주의·미입고·락누락)만 보기", value=False)
         with _f2:
             hide_checked = st.toggle("✔ 확인완료 숨기기", value=False,
                                      help="이미 확인(체크)한 항목을 목록에서 숨겨 반복 작업 방지")
-        view_df = (result_df[result_df["_color"].isin(["red", "orange", "gray"])]
+        view_df = (result_df[result_df["_color"].isin(["red", "orange", "gray"])
+                             | result_df["_lockmiss"]]
                    if abn_only else result_df)
         with _f3:
             st.download_button(
@@ -537,15 +617,22 @@ if uploaded:
             _o = int((wh_df["_color"] == "orange").sum())
             _k = int((wh_df["_color"] == "").sum())
             _m = int((wh_df["_color"] == "gray").sum())
-            st.markdown(f"#### 🏬 {wh}  —  🔴 위험 {_r} · 🟠 주의 {_o} · ✅ 정상 {_k} · ❌ 미입고 {_m}")
-            disp = wh_df.drop(columns=["_color", "창고", "확인여부"]).copy()
+            _lm = int(wh_df["_lockmiss"].sum())
+            st.markdown(f"#### 🏬 {wh}  —  🔴 위험 {_r} · 🟠 주의 {_o} · ✅ 정상 {_k} · "
+                        f"❌ 미입고 {_m} · 🔴 락누락 {_lm}")
+            disp = wh_df.drop(columns=["_color", "_lockmiss", "창고", "확인여부"]).copy()
             disp["상태"] = [f'{_EMO.get(c, "")} {s}'
                           for c, s in zip(wh_df["_color"], wh_df["상태"])]
             disp.insert(0, "확인", seed)
-            _bg = wh_df["_color"].tolist()   # 행별 색 (disp 행 순서와 일치)
+            _bg = wh_df["_color"].tolist()          # 행별 색 (disp 행 순서와 일치)
+            _lmm = wh_df["_lockmiss"].tolist()
 
-            def _row_style(row, bg=_bg):
-                return [f"background-color: {BG.get(bg[row.name], '#FFFFFF')}"] * len(row)
+            def _row_style(row, bg=_bg, lm=_lmm):
+                # 락누락 행은 색 없음이어도 옅은 분홍으로 강조
+                c = BG.get(bg[row.name], "#FFFFFF")
+                if lm[row.name] and c == "#FFFFFF":
+                    c = "#FFD6D6"
+                return [f"background-color: {c}"] * len(row)
 
             # Styler로 행 전체 배경색 유지 + 체크박스 편집 가능
             styled = disp.style.apply(_row_style, axis=1).map(
@@ -573,10 +660,14 @@ if uploaded:
 | 🟠 주황 (주의) — 신규파우치 출고 임박 (락해제 점검 필요) | **동일** 유통기한 출고 진행 중  ·  또는  ·  락 없는 동일 유통기한 재고 없고 **직전** 유통기한 출고 진행 중 |
 | ⬜ 색 없음 (정상) | 락 없는 동일 유통기한 재고 있음 |
 | ⬛ 회색 (미입고) | 등록 품목/유통기한 재고가 이 창고에 **없음** |
+| 🟥 분홍 (락누락) | **전량** 등록인데 락 안 걸린 재고가 있음 — 락 확인 필요 |
 
 **추가 열**
+- **리뉴얼구분** : 등록 시 지정한 전량/부분 (미지정이면 재등록해 지정)
 - **창고입고** : 등록 (품목·유통기한) 재고가 이 창고에 입고됐는지 (✅ 입고 / ❌ 미입고)
-- **리뉴얼(락)** : 등록 유통기한 재고가 🔒 **전량 리뉴얼(락)** 인지, 🔓 **락 일부해제(출고가능분 있음)** 인지
+- **리뉴얼(락)** : 리뉴얼구분에 비춘 락 상태
+  - **전량** → 🔒 전량 락(정상) / 🔴 **락 누락 의심**(전량인데 미락 재고 있음)
+  - **부분** → 🔓 부분(락 해제분 정상)
         """)
 
         st.markdown("""
