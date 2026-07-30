@@ -518,6 +518,9 @@ if uploaded:
                 for item in wl:
                     sc = scope_map.get(_scope_key(item["code"], item["expiry"]), "미지정")
                     a = analyze_item(df_wh, str(item["code"]), str(item["expiry"]), sc)
+                    # 미입고(품목/유통기한 없음)는 IC930에서만 표시 — 다른 창고는 없어도 무시
+                    if a["color"] == "gray" and wh != "IC930":
+                        continue
                     출고중 = a["출고중"]
                     rows.append(
                         {
@@ -544,8 +547,8 @@ if uploaded:
             st.stop()
         BG = {"red": "#FFCCCC", "orange": "#FFE0B2", "gray": "#E0E0E0", "": "#FFFFFF"}
 
-        # 전체 요약
-        _n_reg = len(wl) * len(sel_whs)
+        # 전체 요약 (미입고는 IC930에서만 집계되므로 분모는 실제 표시 건수)
+        _n_reg = len(result_df)
         _n_in  = int((result_df["창고입고"].astype(str).str.startswith("✅")).sum())
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("📦 창고입고", f"{_n_in}/{_n_reg}",
