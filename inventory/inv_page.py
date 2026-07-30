@@ -488,46 +488,51 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
     # 기능별 추가 입력 (해당 버튼 바로 아래에서 업로드) — (kind, 라벨, 필수여부)
     AUX = {
         "일일실사": [("daily", "📎 일일입력 xlsx — 차이수량 반영 (선택)", False)],
-        "토요일":   [("prod", "📎 쿠팡 제품별리스트 xlsx — 출하 대상 품목 (필수)", True),
-                     ("prod2", "📎 컬리 제품별리스트 xlsx — 출하 대상 품목 (선택, 있으면 합집합)", False),
-                     ("daily", "📎 일일입력 xlsx — 차이수량 반영 (선택)", False)],
+        "토요일":   [("daily", "📎 일일입력 xlsx — 차이수량 반영 (선택)", False),
+                     ("prod", "📎 쿠팡 제품별리스트 xlsx — 출하 대상 품목 (필수)", True),
+                     ("prod2", "📎 컬리 제품별리스트 xlsx — 출하 대상 품목 (선택, 있으면 합집합)", False)],
     }
     _amap = {a[2]: a for a in ALL_ACTIONS}
     actions = [_amap[k] for k in action_keys if k in _amap]  # 전달된 순서 그대로 표시
+
+    st.divider()  # 위쪽 파일 업로드 영역과 시각적 분리
+    st.subheader("📋 실사지 · 점검 실행")
+
     for label, hint, key, out_tag in actions:
-        c1, c2 = st.columns([3, 2])
-        with c1:
-            clicked = st.button(f"▶ {label}", key=f"btn_{key}", width='stretch')
-            st.caption(hint)
-            aux = {}
-            for kind, lbl, required in AUX.get(key, []):
-                f = st.file_uploader(lbl, type=["xlsx"], key=f"aux_{key}_{kind}")
-                aux[kind] = f
-                if required and not f:
-                    st.caption("⚠ 이 파일을 올려야 실행됩니다")
-        with c2:
-            if clicked:
-                with st.spinner(f"{label} 실행 중..."):
-                    st.session_state.inv_results[key] = run_action(
-                        key, out_tag, up_daily=aux.get("daily"),
-                        up_prod=aux.get("prod"), up_prod2=aux.get("prod2"))
-            res = st.session_state.inv_results.get(key)
-            if res:
-                if res.get("error"):
-                    st.error(res["error"])
-                else:
-                    st.download_button(
-                        f"📥 {res['name']}", res["data"], res["name"],
-                        mime=MIME, key=f"dl_{key}", width='stretch')
-        # 결과 화면 미리보기 (점검 페이지) — 엑셀 다운로드는 위에 그대로 유지
-        if preview:
-            res = st.session_state.inv_results.get(key)
-            if res and not res.get("error") and res.get("data"):
-                with st.expander(f"📄 {label} — 결과 화면 보기", expanded=True):
-                    if key == "nonlock" and res.get("rows") is not None:
-                        _show_nonlock_checks(res["rows"])
+        with st.container(border=True):
+            c1, c2 = st.columns([3, 2])
+            with c1:
+                clicked = st.button(f"▶ {label}", key=f"btn_{key}", width='stretch')
+                st.caption(hint)
+                aux = {}
+                for kind, lbl, required in AUX.get(key, []):
+                    f = st.file_uploader(lbl, type=["xlsx"], key=f"aux_{key}_{kind}")
+                    aux[kind] = f
+                    if required and not f:
+                        st.caption("⚠ 이 파일을 올려야 실행됩니다")
+            with c2:
+                if clicked:
+                    with st.spinner(f"{label} 실행 중..."):
+                        st.session_state.inv_results[key] = run_action(
+                            key, out_tag, up_daily=aux.get("daily"),
+                            up_prod=aux.get("prod"), up_prod2=aux.get("prod2"))
+                res = st.session_state.inv_results.get(key)
+                if res:
+                    if res.get("error"):
+                        st.error(res["error"])
                     else:
-                        _show_xlsx(res["data"])
+                        st.download_button(
+                            f"📥 {res['name']}", res["data"], res["name"],
+                            mime=MIME, key=f"dl_{key}", width='stretch')
+            # 결과 화면 미리보기 (점검 페이지) — 엑셀 다운로드는 위에 그대로 유지
+            if preview:
+                res = st.session_state.inv_results.get(key)
+                if res and not res.get("error") and res.get("data"):
+                    with st.expander(f"📄 {label} — 결과 화면 보기", expanded=True):
+                        if key == "nonlock" and res.get("rows") is not None:
+                            _show_nonlock_checks(res["rows"])
+                        else:
+                            _show_xlsx(res["data"])
 
     st.caption("ⓘ 각 버튼은 독립 실행 — 원하는 것만 눌러 결과를 받으세요. "
                "담당자(공유여부 자동채움)는 Supabase(비공개)에 저장돼 결과에 반영됩니다.")
