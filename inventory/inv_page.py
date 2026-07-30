@@ -10,11 +10,18 @@ import base64
 import io
 import json
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+
+KST = timezone(timedelta(hours=9))
+
+
+def _now_kst():
+    return datetime.now(KST)
+
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
@@ -238,7 +245,7 @@ def _store_master(data: bytes, count: int) -> bool:
     if not _SB_OK:
         return False
     try:
-        meta = {"updated": datetime.now().strftime("%Y-%m-%d %H:%M"), "n": count}
+        meta = {"updated": _now_kst().strftime("%Y-%m-%d %H:%M"), "n": count}
         _sb().table("app_settings").upsert(
             {"key": MASTER_META_KEY, "value": meta}, on_conflict="key").execute()
         _sb().table("app_settings").upsert(
@@ -275,7 +282,7 @@ def _store_loc(data: bytes, count: int) -> bool:
     if not _SB_OK:
         return False
     try:
-        meta = {"updated": datetime.now().strftime("%Y-%m-%d %H:%M"), "n": count}
+        meta = {"updated": _now_kst().strftime("%Y-%m-%d %H:%M"), "n": count}
         _sb().table("app_settings").upsert(
             {"key": LOC_META_KEY, "value": meta}, on_conflict="key").execute()
         _sb().table("app_settings").upsert(
