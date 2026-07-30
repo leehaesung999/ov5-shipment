@@ -14,6 +14,9 @@ except NameError:
     KST = _tz(_td(hours=9))
     def _now_kst():
         return datetime.now(KST)
+    def _now_kst_naive():
+        # openpyxl 셀에는 tz-naive datetime 필요
+        return datetime.now(KST).replace(tzinfo=None)
 
 from collections import defaultdict
 from pathlib import Path
@@ -436,7 +439,7 @@ def write_재고지_1단_from_template(rows, output_path, highlight_set=None,
     # 1행 날짜/시간 갱신 (원본은 =TODAY()/=NOW() 수식)
     ws.cell(row=1, column=1, value=datetime.today())
     ws.cell(row=1, column=1).number_format = "yyyy-mm-dd"
-    ws.cell(row=1, column=7, value=_now_kst())
+    ws.cell(row=1, column=7, value=_now_kst_naive())
     ws.cell(row=1, column=7).number_format = "yyyy-mm-dd hh:mm"
 
     # 정렬
@@ -653,7 +656,7 @@ def write_재고지_1단_전체_from_template(rows, output_path, template_path=N
     # 1행 날짜/시간
     ws.cell(row=1, column=1, value=datetime.today())
     ws.cell(row=1, column=1).number_format = "yyyy-mm-dd"
-    ws.cell(row=1, column=6, value=_now_kst())
+    ws.cell(row=1, column=6, value=_now_kst_naive())
     ws.cell(row=1, column=6).number_format = "yyyy-mm-dd hh:mm"
 
     rows_sorted = sorted(
@@ -882,7 +885,7 @@ def write_재고지_단별_from_template(rows_by_단, output_path, template_path
         # 1행 날짜/시간
         ws.cell(row=1, column=1, value=datetime.today())
         ws.cell(row=1, column=1).number_format = "yyyy-mm-dd"
-        ws.cell(row=1, column=6, value=_now_kst())
+        ws.cell(row=1, column=6, value=_now_kst_naive())
         ws.cell(row=1, column=6).number_format = "yyyy-mm-dd hh:mm"
 
         rows = rows_by_단.get(단, [])
