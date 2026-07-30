@@ -6,6 +6,15 @@
 
 import sys
 from datetime import datetime
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return datetime.now(KST)
+
 from collections import defaultdict
 from pathlib import Path
 
@@ -215,7 +224,7 @@ def write_보충오류_sheet(wb, rows):
 
     # 1행: 날짜/시간 (원본 양식)
     ws.cell(row=1, column=1, value=datetime.today().strftime("%Y-%m-%d"))
-    ws.cell(row=1, column=5, value=datetime.now().strftime("%Y-%m-%d %H:%M"))
+    ws.cell(row=1, column=5, value=_now_kst().strftime("%Y-%m-%d %H:%M"))
 
     # 2행: 헤더
     header_font = Font(bold=True, color="FFFFFF")
@@ -427,7 +436,7 @@ def write_재고지_1단_from_template(rows, output_path, highlight_set=None,
     # 1행 날짜/시간 갱신 (원본은 =TODAY()/=NOW() 수식)
     ws.cell(row=1, column=1, value=datetime.today())
     ws.cell(row=1, column=1).number_format = "yyyy-mm-dd"
-    ws.cell(row=1, column=7, value=datetime.now())
+    ws.cell(row=1, column=7, value=_now_kst())
     ws.cell(row=1, column=7).number_format = "yyyy-mm-dd hh:mm"
 
     # 정렬
@@ -644,7 +653,7 @@ def write_재고지_1단_전체_from_template(rows, output_path, template_path=N
     # 1행 날짜/시간
     ws.cell(row=1, column=1, value=datetime.today())
     ws.cell(row=1, column=1).number_format = "yyyy-mm-dd"
-    ws.cell(row=1, column=6, value=datetime.now())
+    ws.cell(row=1, column=6, value=_now_kst())
     ws.cell(row=1, column=6).number_format = "yyyy-mm-dd hh:mm"
 
     rows_sorted = sorted(
@@ -873,7 +882,7 @@ def write_재고지_단별_from_template(rows_by_단, output_path, template_path
         # 1행 날짜/시간
         ws.cell(row=1, column=1, value=datetime.today())
         ws.cell(row=1, column=1).number_format = "yyyy-mm-dd"
-        ws.cell(row=1, column=6, value=datetime.now())
+        ws.cell(row=1, column=6, value=_now_kst())
         ws.cell(row=1, column=6).number_format = "yyyy-mm-dd hh:mm"
 
         rows = rows_by_단.get(단, [])

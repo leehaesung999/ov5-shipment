@@ -20,6 +20,15 @@ import json
 import re
 from collections import defaultdict
 from datetime import date, datetime
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return datetime.now(KST)
+
 from pathlib import Path
 
 import openpyxl
@@ -139,7 +148,7 @@ def load_customers():
 
 
 def save_customers(df, source=None):
-    d = {'updated': datetime.now().strftime('%Y-%m-%d %H:%M'),
+    d = {'updated': _now_kst().strftime('%Y-%m-%d %H:%M'),
          'source': source or '화면 조정',
          'rows': df.to_dict('records')}
     CUST_FILE.write_text(json.dumps(d, ensure_ascii=False, indent=1), encoding='utf-8')
@@ -170,7 +179,7 @@ def rebuild_items(file_bytes, source_name):
         mv = to_float(ws.cell(r, 7).value)
         items[k] = {'n': str(nm).strip() if nm else '', 'm': mv if mv > 0 else None}
     wb.close()
-    d = {'updated': datetime.now().strftime('%Y-%m-%d %H:%M'), 'source': source_name, 'items': items}
+    d = {'updated': _now_kst().strftime('%Y-%m-%d %H:%M'), 'source': source_name, 'items': items}
     ITEM_FILE.write_text(json.dumps(d, ensure_ascii=False), encoding='utf-8')
     return len(items), d['updated']
 

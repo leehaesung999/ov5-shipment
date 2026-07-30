@@ -21,6 +21,15 @@ import sys
 import warnings
 from collections import defaultdict
 from datetime import datetime
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return datetime.now(KST)
+
 
 # ERP export 파일이 기본 스타일 메타데이터를 빼고 저장해서 나오는 경고 무시
 warnings.filterwarnings(
@@ -307,7 +316,7 @@ def find_latest(pattern, required=True):
 
 def extract_date(filename):
     m = re.search(r"(\d{8})", os.path.basename(filename))
-    return m.group(1) if m else datetime.now().strftime("%Y%m%d")
+    return m.group(1) if m else _now_kst().strftime("%Y%m%d")
 
 
 def _open_fast(path):
@@ -826,7 +835,7 @@ def _write_summary_sheet(wb, analysis):
         ["쿠팡 지정출고 자동매칭 결과", ""],
         ["", ""],
         ["기준일자", analysis["date_short"]],
-        ["생성시각", datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+        ["생성시각", _now_kst().strftime("%Y-%m-%d %H:%M:%S")],
         ["입력: 재고조회", os.path.basename(analysis["inv_path"])],
         ["입력: 출고진행현황", os.path.basename(analysis["out_path"])],
         ["기준정보/팔레트 소스",

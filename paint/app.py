@@ -8,6 +8,15 @@ import sys
 import traceback
 from pathlib import Path
 from datetime import datetime
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return datetime.now(KST)
+
 
 import openpyxl
 import streamlit as st
@@ -115,7 +124,7 @@ if not up_src:
 
 if run_clicked:
     try:
-        ts = datetime.now().strftime("%Y%m%d_%H%M")
+        ts = _now_kst().strftime("%Y%m%d_%H%M")
         src_path = TMP / f"_src_{up_src.name}"
         src_path.write_bytes(up_src.getvalue())
 

@@ -493,7 +493,7 @@ st.divider()
 st.header("② 월별 출고 데이터")
 
 # ① 기준월 먼저 선택
-now = datetime.now()
+now = _now_kst()
 default_ym_pick = f"{now.year}-{now.month:02d}"
 ym = st.text_input("① 기준월 (YYYY-MM)", value=default_ym_pick,
                    max_chars=7, key="ym_input")

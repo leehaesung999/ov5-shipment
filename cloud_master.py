@@ -9,6 +9,15 @@ from __future__ import annotations
 import base64
 import os
 from datetime import datetime
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return datetime.now(KST)
+
 from pathlib import Path
 
 try:
@@ -62,7 +71,7 @@ def store(prefix: str, data: bytes, count: int) -> bool:
     if not use_supabase():
         return False
     try:
-        meta = {"updated": datetime.now().strftime("%Y-%m-%d %H:%M"), "n": int(count)}
+        meta = {"updated": _now_kst().strftime("%Y-%m-%d %H:%M"), "n": int(count)}
         _sb().table("app_settings").upsert(
             {"key": f"{prefix}_master_meta", "value": meta}, on_conflict="key").execute()
         _sb().table("app_settings").upsert(

@@ -1,4 +1,13 @@
 from datetime import datetime
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return datetime.now(KST)
+
 import os
 import re
 import pandas as pd
@@ -60,7 +69,7 @@ def write_summary(df: pd.DataFrame, out_dir: str,
                   prefix: str = "지정출고_매칭결과") -> str:
     """거래처별 long 양식으로 저장 (Item ID·Item·유통기한·매칭수량·거래처명)."""
     os.makedirs(out_dir, exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    ts = _now_kst().strftime("%Y%m%d_%H%M")
     path = os.path.join(out_dir, f"{prefix}_{ts}.xlsx")
 
     long_df = to_long(df)

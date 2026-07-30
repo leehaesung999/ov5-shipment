@@ -14,6 +14,15 @@ import shutil
 import sys
 from copy import copy as _copy
 from datetime import datetime, date, time as dtime
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return datetime.now(KST)
+
 from pathlib import Path
 
 import openpyxl
@@ -259,7 +268,7 @@ def load_master():
 def save_master(mapping, source_name):
     data = {
         'mapping': mapping,
-        'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'updated_at': _now_kst().strftime('%Y-%m-%d %H:%M:%S'),
         'count': len(mapping),
         'source_name': source_name,
     }
@@ -1028,7 +1037,7 @@ with st.sidebar:
                         'duplicates': dups,
                         'count': len(flat_max),
                         'source_name': new_expiry.name,
-                        'updated_at': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        'updated_at': _now_kst().strftime('%Y-%m-%d %H:%M:%S'),
                     }
                     st.session_state.expiry_master = saved
                     expiry_master = saved
@@ -1438,7 +1447,7 @@ if output_mode.startswith('FCJ'):
                          hide_index=True, use_container_width=True)
 
 # 다운로드
-today_str = datetime.now().strftime('%y%m%d')
+today_str = _now_kst().strftime('%y%m%d')
 
 def _pallets_signature(pallets):
     """파레트 데이터 변경 감지를 위한 가벼운 시그너처."""
