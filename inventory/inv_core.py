@@ -1104,19 +1104,42 @@ def edit_재고지_2_6단(stock_path, master_path, output_path, log=print):
 # ============================================================
 
 def load_담당자(path=None):
-    """물품담당자 xlsx 로드 (A: 코드, B: 담당자). 코드 -> 담당자(trim) dict 반환.
-    파일 없으면 빈 dict."""
+    """물품담당자 xlsx 로드. 코드 -> 담당자(trim) dict 반환. 파일 없으면 빈 dict.
+
+    헤더행에서 '코드'/'담당자' 열을 이름으로 찾아 위치 무관하게 처리한다.
+    - 신규 양식(123.xlsx 등): 코드=B열, 담당자=K열 등 어디에 있어도 됨
+    - 기존 2열 양식(코드, 담당자): 그대로 동작
+    헤더를 못 찾으면 기존 방식(A=코드, B=담당자)으로 폴백.
+    """
     path = Path(path or 담당자_PATH)
     if not path.exists():
         return {}
     wb = openpyxl.load_workbook(path, data_only=True)
     ws = wb.active
+
+    # 헤더행에서 코드/담당자 열 인덱스 탐색
+    header = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), ())
+    code_i, name_i = None, None
+    for i, h in enumerate(header):
+        if h is None:
+            continue
+        ht = str(h).strip()
+        if code_i is None and ht == "코드":
+            code_i = i
+        elif name_i is None and ht == "담당자":
+            name_i = i
+    if code_i is None or name_i is None:      # 폴백: 기존 A=코드, B=담당자
+        code_i, name_i = 0, 1
+
     m = {}
     for row in ws.iter_rows(min_row=2, values_only=True):
-        if not row or row[0] is None:
+        if not row or code_i >= len(row) or name_i >= len(row):
             continue
-        code = str(int(row[0])) if isinstance(row[0], (int, float)) else str(row[0]).strip()
-        name = str(row[1]).strip() if row[1] is not None else None
+        cval, nval = row[code_i], row[name_i]
+        if cval is None:
+            continue
+        code = str(int(cval)) if isinstance(cval, (int, float)) else str(cval).strip()
+        name = str(nval).strip() if nval is not None else None
         if code and name:
             m[code] = name
     wb.close()

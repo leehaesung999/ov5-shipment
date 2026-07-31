@@ -188,7 +188,8 @@ def _fetch_담당자() -> dict:
 
 
 def _setup_담당자(up_file) -> tuple:
-    """담당자 매핑을 core.담당자_PATH 에 준비. 우선순위: 세션 업로드 > Supabase."""
+    """담당자 매핑을 core.담당자_PATH 에 준비. 우선순위: 세션 업로드 > Supabase.
+    업로드 시 Supabase에도 자동 저장 (다음 실행 때 재업로드 불필요)."""
     import openpyxl
     src = "업로드" if up_file else ("Supabase" if _SB_OK else None)
     if up_file:
@@ -196,7 +197,17 @@ def _setup_담당자(up_file) -> tuple:
         p.write_bytes(up_file.getvalue())
         core.담당자_PATH = p
         try:
-            return src, len(core.load_담당자(str(p)))
+            m = core.load_담당자(str(p))
+            # Supabase에 저장 (다음 실행부터 자동 로드)
+            if _SB_OK and m:
+                try:
+                    _sb().table("app_settings").upsert(
+                        {"key": "inventory_담당자", "value": m}, on_conflict="key"
+                    ).execute()
+                    src = "업로드 → Supabase 저장"
+                except Exception:
+                    pass
+            return src, len(m)
         except Exception:
             return src, 0
     m = _fetch_담당자()
