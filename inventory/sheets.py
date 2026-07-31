@@ -31,7 +31,6 @@ show_help({
 }, expanded=False)
 inv_page.render(
     ["일일실사", "토요일", "1단전체", "2_6단"],
-    "📋 실사지 출력",
-    "일일 · 토요일 · 1단 실사지 및 2~6단 재고지 생성 → 엑셀 다운로드",
-    show_title=False,
+    "",  # title은 위에서 이미 표시
+    "",
 )
