@@ -163,6 +163,32 @@ def analyze_mixed(records, master=None):
             "잔량": 잔량,
         })
 
+    # 품번별 FEFO 판정 준비:
+    # - 기본로케(fixed_loc == location) 재고의 최저 유통기한 ≤ 다른 로케 재고의 최저 유통기한 → 정상
+    code_fixed_exps = defaultdict(list)
+    code_other_exps = defaultdict(list)
+    for r in records:
+        if is_locked(r) or is_ov_location(r):
+            continue
+        exp = r["유통기한"]
+        if exp is None:
+            continue
+        loc_s = str(r["location"] or "").strip()
+        fix_s = str(r["fixed_loc"] or "").strip()
+        if not loc_s or not fix_s:
+            continue
+        if loc_s == fix_s:
+            code_fixed_exps[r["code"]].append(exp)
+        else:
+            code_other_exps[r["code"]].append(exp)
+
+    def _fefo_판정(code):
+        fexps = code_fixed_exps.get(code)
+        oexps = code_other_exps.get(code)
+        if not fexps or not oexps:
+            return "-"  # 비교 불가
+        return "정상" if min(fexps) <= min(oexps) else "이상"
+
     detail = []
     for loc, items in sorted(by_loc.items()):
         combos = {(it["rec"]["code"], it["rec"]["유통기한"]) for it in items}
@@ -183,7 +209,7 @@ def analyze_mixed(records, master=None):
                 "_빈": None,
                 "파렛트": it["파렛트"],
                 "잔량": it["잔량"],
-                "특이사항": None,
+                "특이사항": _fefo_판정(r["code"]),
             })
     return detail
 
@@ -238,14 +264,23 @@ def write_보충오류_sheet(wb, rows):
         cell.fill = header_fill
         cell.alignment = Alignment(horizontal="center", vertical="center")
 
+    # 색상: 정상=연초록, 이상=연빨강
+    green_fill = PatternFill("solid", fgColor="C6EFCE")
+    red_fill = PatternFill("solid", fgColor="FFC7CE")
+
     # 3행~ : 데이터
+    n_cols = len(keys)
     for r_idx, row in enumerate(rows, 3):
+        판정 = row.get("특이사항")
+        fill = green_fill if 판정 == "정상" else (red_fill if 판정 == "이상" else None)
         for c_idx, key in enumerate(keys, 1):
             v = row.get(key)
             if key == "유통기한" and isinstance(v, datetime):
-                ws.cell(row=r_idx, column=c_idx, value=v.strftime("%Y-%m-%d"))
+                cell = ws.cell(row=r_idx, column=c_idx, value=v.strftime("%Y-%m-%d"))
             else:
-                ws.cell(row=r_idx, column=c_idx, value=v)
+                cell = ws.cell(row=r_idx, column=c_idx, value=v)
+            if fill is not None:
+                cell.fill = fill
 
     # 컬럼 폭
     for i, w in enumerate(widths, 1):
