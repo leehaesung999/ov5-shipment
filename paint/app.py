@@ -86,6 +86,18 @@ st.caption(
     "ERP `Item_*.xlsx` 원본을 업로드하면 자동으로 **편집본**(고정로케이션 · Item code 있음 · OV 제외) "
     "과 **색칠본**을 생성합니다."
 )
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from page_help import show_help  # noqa: E402
+show_help({
+    "목적": "창고 배치도(레이아웃 xlsm)에 현재 로케이션별 품목을 자동 채우고 색·테두리 적용.",
+    "필요한 파일": "① ERP Item_*.xlsx 원본 (필수)  ② 레이아웃 xlsm (선택, 미업로드 시 내장 기본 사용)",
+    "사용 순서": "1. ① 원본 xlsx 업로드\n"
+                 "2. (선택) 옵션에서 다른 레이아웃 파일이나 시트명 지정\n"
+                 "3. [▶ 편집 + 색칠 실행]\n"
+                 "4. 📥 편집본 xlsx + 색칠본 xlsm 각각 다운로드",
+    "자동 편집 규칙": "· 보관타입 == '고정로케이션'\n· Item code 있음\n· 로케이션이 'OV'로 시작하지 않음\n"
+                       "· I/J/K 열은 C열(로케이션ID) 자동 복사",
+})
 
 up_src = st.file_uploader(
     "① 원본 데이터 xlsx (예: `Item_20260723105335.xlsx`)",

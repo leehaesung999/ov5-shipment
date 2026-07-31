@@ -58,6 +58,20 @@ try:  # 단독 실행 시에만 적용 (통합 Home.py에서 실행되면 이미
 except Exception:
     pass
 st.title("쿠팡 지정출고 자동매칭")
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from page_help import show_help  # noqa: E402
+show_help({
+    "목적": "쿠팡 지정출고 재고를 자동 매칭 (FEFO) + 거래처 직접 수정 후 엑셀 다운로드.",
+    "필요한 파일": "① 재고조회 xlsx  ② 출고진행현황 xlsx",
+    "사용 순서": "1. 사이드바에서 하대 마스터·기능2 대상품목 확인/등록\n"
+                 "2. ① 재고 파일 업로드 → OV5 락재고 + 대상품목 출고가능 현황\n"
+                 "3. ② 출고진행 파일 업로드 → 자동 매칭\n"
+                 "4. 매칭 결과 표에서 거래처 셀 수정 가능\n"
+                 "5. Excel 다운로드",
+    "참고": "기능2 대상품목은 사이드바에서 관리. 매칭은 FEFO(선입선출).",
+})
 st.caption("재고 업로드 → 출고진행 업로드 → 매칭 결과 + 거래처 수정 → 엑셀 다운로드")
 
 

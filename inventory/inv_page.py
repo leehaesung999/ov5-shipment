@@ -306,18 +306,21 @@ ALL_ACTIONS = [
 ]
 
 
-def render(action_keys, title: str, caption: str, preview: bool = False):
+def render(action_keys, title: str, caption: str, preview: bool = False,
+           show_title: bool = True):
     """action_keys(집합)에 해당하는 기능만 노출하는 재고 분석 페이지 렌더.
 
     preview=True 이면 실행 결과를 엑셀 다운로드와 함께 화면에 표로 표시한다.
+    show_title=False 이면 title/caption을 여기서 표시하지 않음 (호출자가 처리).
     """
     try:
         st.set_page_config(page_title="통합센터 재고 분석기", layout="wide")
     except Exception:
         pass
 
-    st.title(title)
-    st.caption(caption)
+    if show_title:
+        st.title(title)
+        st.caption(caption)
 
     # ---------- 사이드바: 기준정보 (접기) ----------
     with st.sidebar.expander("⚙️ 기준정보 / 옵션 — 클릭해서 열기", expanded=False):

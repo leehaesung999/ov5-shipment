@@ -23,6 +23,17 @@ except Exception:
     pass
 
 st.title("🖨️ 수출 표식지")
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from page_help import show_help  # noqa: E402
+show_help({
+    "목적": "수출 피킹분 라벨(표식지) 자동 인쇄. '복사본 수출.xlsm'의 자동출력() 매크로 웹 이식본.",
+    "필요한 파일": "상세_리스트(inventory,order).xlsx",
+    "사용 순서": "1. 파일 업로드 → 미리보기\n"
+                 "2. [인쇄] 버튼 → 팝업으로 인쇄 창 열림 (프린터 또는 PDF 저장)",
+    "참고": "팝업 차단 시 브라우저에서 팝업 허용 필요.",
+})
 st.caption("상세_리스트(inventory,order).xlsx → 출고건별 라벨을 출력장수만큼 자동 인쇄")
 st.info("규칙 · **라벨** = Shipping Instruction · **출력장수** = ROUNDUP(P/L환산) + 여유분  "
         "→ 아래 표에서 수정 가능, [🖨️ 인쇄] 누르면 인쇄창이 바로 열립니다.", icon="📐")

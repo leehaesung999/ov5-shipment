@@ -29,6 +29,17 @@ except Exception:
     pass
 
 st.title("🔒 LOCK 실사 프로그램")
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from page_help import show_help  # noqa: E402
+show_help({
+    "목적": "Lock 재고 원본 엑셀(조회1_xxx.xlsx)을 실사용 락.xlsx 로 자동 변환.",
+    "필요한 파일": "조회1_xxx.xlsx (Lock 재고 원본)",
+    "사용 순서": "1. 원본 xlsx 업로드\n"
+                 "2. 자동 처리: 빈 출고진행 열 삭제 + 필터(Location '-' 없음 & 사유≠불가_실사차이) + 정렬\n"
+                 "3. 락.xlsx 다운로드",
+})
 st.caption("조회1_xxx.xlsx (Lock 재고 원본) → 락.xlsx (필터·정렬 + 피벗)")
 st.info("변환 규칙 · **sheet**: 빈 출고진행열 삭제 + 필터(Location '-' 없음 & 사유≠불가_실사차이) + 정렬 "
         "· **Sheet1**: (Location·ItemID·유통기한) 재고수량 합계 피벗 + 총합계", icon="📐")

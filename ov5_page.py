@@ -249,6 +249,16 @@ try:  # 단독 실행 시에만 적용 (통합 Home.py에서 실행되면 이미
 except Exception:
     pass
 st.title("농협/대리점 지정출고")
+from page_help import show_help  # noqa: E402
+show_help({
+    "목적": "OV5 로케이션의 Lock 재고를 농협/대리점 주문에 자동 매칭 (FEFO).",
+    "필요한 파일": "① 재고조회 xlsx (로케이션별)  ② 주문 xlsx",
+    "사용 순서": "1. ① 재고 파일 업로드 → OV5 Lock 재고 현황 자동 표시\n"
+                 "2. ② 주문 파일 업로드\n"
+                 "3. 매칭 결과 화면에서 거래처 셀 직접 수정 가능\n"
+                 "4. 최종 결과 xlsx 다운로드",
+    "참고": "기준정보(하대·팔레트)와 지정로케이션은 사이드바에서 관리. 매칭은 FEFO(선입선출).",
+})
 st.caption("재고 파일 업로드 → 현황 확인 → 주문 파일 업로드 → 매칭 결과 → 다운로드")
 
 settings = load_settings()

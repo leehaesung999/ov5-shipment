@@ -28,6 +28,18 @@ except Exception:
     pass
 
 st.title("🏬 분산재고 점검 프로그램")
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from page_help import show_help  # noqa: E402
+show_help({
+    "목적": "IC930(이천 통합센터) 재고 vs 타 창고(ATN/BNF 등) 유통기한 비교. 정상/비정상 판정.",
+    "필요한 파일": "재고조회 xlsx (여러 창고 데이터 포함)",
+    "사용 순서": "1. 재고 파일 업로드\n"
+                 "2. IC930 기준 vs 타 창고 유통기한 자동 비교\n"
+                 "3. 결과: 정상 / 비정상 / 정상(지정출고) 판정\n"
+                 "4. 필요 시 지정출고 유통기한을 붙여넣어 재판정 가능",
+})
 st.caption("재고조회 업로드 → IC930(통합) vs 타 창고 유통기한 비교 → 정상/비정상 판정")
 
 

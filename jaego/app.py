@@ -400,6 +400,19 @@ try:  # 단독 실행 시에만 (통합 Home.py에서 실행되면 무시)
 except Exception:
     pass
 st.title("📦 신규파우치 점검 프로그램")
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).parent.parent))
+from page_help import show_help  # noqa: E402
+show_help({
+    "목적": "신규 파우치 워치리스트를 관리하고, 재고 파일을 올려서 유통기한 임박 여부를 점검.",
+    "필요한 파일": "재고조회 xlsx (Location별). 워치리스트는 Supabase(공유) 또는 로컬 json.",
+    "사용 순서": "1. 워치리스트 확인/편집 (신규 파우치 품번·품명·기준일)\n"
+                 "2. 재고 파일 업로드\n"
+                 "3. 각 품번별 잔여 유통기한·소진 예상 표시\n"
+                 "4. 필요 시 결과 다운로드",
+    "참고": "클라우드 배포에선 Supabase 공유 리스트를 사용.",
+})
 
 # watchlist 테이블 미생성 감지 → 1회 안내 (테이블 만들면 사라짐)
 if USE_SUPABASE:
