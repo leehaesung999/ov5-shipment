@@ -51,15 +51,49 @@ def _code(v):
     return str(v).strip()
 
 
+def _num(x):
+    """숫자로(넘파이/NaN 안전). 아니면 None."""
+    try:
+        if x is None:
+            return None
+        f = float(x)
+        return None if f != f else f          # NaN 제외
+    except (TypeError, ValueError):
+        return None
+
+
 def parse_stock(file):
-    """재고입력: A=품목코드, B=현재고, C=할당(선택). 헤더 1행."""
+    """재고입력 — 헤더명 자동인식 + .xls/.xlsx 겸용.
+    코드열: 상품코드/품목코드/CJ코드/제품코드/코드
+    현재고열: 재고수량/현재고/재고EA/가용재고   (없으면 2번째 열)
+    할당열(선택): 할당/할당수량
+    → BNF '상품별재고현황' 양식(상품코드·재고수량) 및 기존 [코드,현재고,할당] 양식 모두 지원."""
+    df = pd.read_excel(io.BytesIO(file.getvalue()), header=None, dtype=object)
+    hrow = 0
+    for i in range(min(6, len(df))):
+        vals = [str(x).strip() for x in df.iloc[i].tolist()]
+        if any(v in ("상품코드", "품목코드", "CJ코드", "제품코드") for v in vals):
+            hrow = i
+            break
+    hdr = [str(x).strip() for x in df.iloc[hrow].tolist()]
+
+    def find(names, default=None):
+        for j, h in enumerate(hdr):
+            if h in names:
+                return j
+        return default
+    ci = find(("상품코드", "품목코드", "CJ코드", "제품코드", "코드"), 0)
+    cur_i = find(("재고수량", "현재고", "현재고(EA)", "재고EA", "가용재고"), 1)
+    al_i = find(("할당", "할당수량", "할당수량(EA)"))
+
     out = {}
-    for r in _rows(file):
-        c = _code(r[0])
+    for r in range(hrow + 1, len(df)):
+        row = df.iloc[r].tolist()
+        c = _code(row[ci]) if ci < len(row) else None
         if not c or not (c.isdigit() or c.startswith("P")):
             continue
-        cur = r[1] if len(r) > 1 and isinstance(r[1], (int, float)) else None
-        alloc = r[2] if len(r) > 2 and isinstance(r[2], (int, float)) else None
+        cur = _num(row[cur_i]) if cur_i < len(row) else None
+        alloc = _num(row[al_i]) if (al_i is not None and al_i < len(row)) else None
         out[c] = {"cur": cur, "alloc": alloc}
     return out
 
@@ -196,7 +230,8 @@ def _pallet_xlsx(rows, plan_d, only_wh=None):
 
 # ---------- 입력 ----------
 st.subheader("1️⃣ 입력 (재고 필수, 나머지 선택)")
-up_stock = st.file_uploader("재고입력 xlsx (A:품목코드 B:현재고 C:할당(선택))", type=["xlsx"], key="t_stock")
+up_stock = st.file_uploader("재고입력 (BNF 상품별재고현황 .xls 그대로 OK / 또는 코드·현재고·할당)",
+                            type=["xlsx", "xls"], key="t_stock")
 with st.expander("추가 입력 (출고가능·입고예정·종료·로케이션재고)"):
     up_avail = st.file_uploader("출고가능재고 (WMS export)", type=["xlsx"], key="t_avail")
     up_inc = st.file_uploader("입고예정", type=["xlsx"], key="t_inc")
