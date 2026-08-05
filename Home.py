@@ -74,7 +74,7 @@ transfer = st.Page(
 
 # 기본 사이드바 네비게이션은 숨기고(아래에서 커스텀 구성) 외부 링크를 최상단에 배치
 nav = st.navigation(
-    [ov5, coupang, checks, jaego, warehouse, janjon, sheets, lock, export_label, safety_stock, transfer, pallet, paint, abc],
+    [ov5, coupang, checks, jaego, warehouse, sheets, lock, export_label, safety_stock, transfer, pallet, paint, abc, janjon],
     position="hidden",
 )
 
@@ -88,7 +88,7 @@ st.sidebar.link_button("🔗 입고계획 (PythonAnywhere)",
 st.sidebar.divider()
 
 # ── 페이지 메뉴 (기본 네비게이션 대체) ──
-for _p in (ov5, coupang, checks, jaego, warehouse, janjon, sheets, lock, export_label, safety_stock, transfer, pallet, paint, abc):
+for _p in (ov5, coupang, checks, jaego, warehouse, sheets, lock, export_label, safety_stock, transfer, pallet, paint, abc, janjon):
     st.sidebar.page_link(_p, width='stretch')
 st.sidebar.divider()
 
