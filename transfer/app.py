@@ -136,15 +136,16 @@ def _pallet_xlsx(rows, plan_d):
         mb = row["★이동_박스"]
         if not isinstance(mb, (int, float)) or mb <= 0:
             continue
-        plt1 = row["파레트환산"]
+        plt = row["하대박스수"]                 # 1파레트당 박스수(구분기 plt환산=박스/파레트 분할기준)
+        plt1 = row["파레트환산"]                # 파레트 점유율(=이동박스/하대)
         ws.cell(r, 1, row["품목코드"])
         ws.cell(r, 2, row["품목명"])
         ws.cell(r, 3, row["입수"])
         ws.cell(r, 4, int(mb))
         ws.cell(r, 5, row["이동_EA"])
         ws.cell(r, 6, "")                      # 소비기한(미사용)
-        ws.cell(r, 7, plt1)                    # plt환산
-        ws.cell(r, 8, plt1 if plt1 is not None else 0.0)   # Plt_1차(패킹 기준)
+        ws.cell(r, 7, plt if plt else 0)       # plt환산 = 하대박스수(파레트당 박스수)
+        ws.cell(r, 8, plt1 if plt1 is not None else 0.0)   # Plt_1차 = 파레트 점유율(패킹 기준)
         r += 1
     out = io.BytesIO()
     wb.save(out)
