@@ -65,9 +65,9 @@ def _num(x):
 def parse_stock(file):
     """재고입력 — 헤더명 자동인식 + .xls/.xlsx 겸용.
     코드열: 상품코드/품목코드/CJ코드/제품코드/코드
-    현재고열: 재고수량/현재고/재고EA/가용재고   (없으면 2번째 열)
+    현재고열: 출고가능량(실가용=재고−등록−대기) 우선 → 없으면 재고수량/현재고/재고EA
     할당열(선택): 할당/할당수량
-    → BNF '상품별재고현황' 양식(상품코드·재고수량) 및 기존 [코드,현재고,할당] 양식 모두 지원."""
+    → BNF '상품별재고현황' 양식(상품코드·출고가능량) 및 기존 [코드,현재고,할당] 양식 모두 지원."""
     df = pd.read_excel(io.BytesIO(file.getvalue()), header=None, dtype=object)
     hrow = 0
     for i in range(min(6, len(df))):
@@ -83,7 +83,10 @@ def parse_stock(file):
                 return j
         return default
     ci = find(("상품코드", "품목코드", "CJ코드", "제품코드", "코드"), 0)
-    cur_i = find(("재고수량", "현재고", "현재고(EA)", "재고EA", "가용재고"), 1)
+    # 실가용재고 우선(출고가능량 = 재고 − 출고등록 − 출고대기), 없으면 총재고
+    cur_i = find(("출고가능량", "출고가능", "실가용재고", "가용재고"))
+    if cur_i is None:
+        cur_i = find(("재고수량", "현재고", "현재고(EA)", "재고EA"), 1)
     al_i = find(("할당", "할당수량", "할당수량(EA)"))
 
     out = {}
