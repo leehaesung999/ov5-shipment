@@ -79,11 +79,14 @@ nav = st.navigation(
 )
 
 # ── 사이드바 최상단: 외부 앱(PythonAnywhere) 바로가기 ──
-st.sidebar.link_button("🔗 일일재고 (PythonAnywhere)",
+st.sidebar.link_button("🔗 통합 일일 재고",
                        "https://goal.pythonanywhere.com/",
                        width='stretch')
-st.sidebar.link_button("🔗 입고계획 (PythonAnywhere)",
+st.sidebar.link_button("🔗 OEM입고 계획",
                        "https://goalkii.pythonanywhere.com/",
+                       width='stretch')
+st.sidebar.link_button("🔗 배차파트 업무 창",
+                       "https://sampyo-shipment-hkdmdboz3qwiysgcozwchd.streamlit.app/",
                        width='stretch')
 st.sidebar.divider()
 
