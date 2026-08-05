@@ -63,10 +63,18 @@ janjon = st.Page(
     "janjon/app.py", title="잔존율 출고 판정", icon="📅",
     url_path="janjon",
 )
+safety_stock = st.Page(
+    "safety_stock/app.py", title="안전재고 계산기", icon="📐",
+    url_path="safety",
+)
+transfer = st.Page(
+    "transfer/app.py", title="재고이동계획", icon="🚚",
+    url_path="transfer",
+)
 
 # 기본 사이드바 네비게이션은 숨기고(아래에서 커스텀 구성) 외부 링크를 최상단에 배치
 nav = st.navigation(
-    [ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label, paint, abc, pallet, janjon],
+    [ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label, paint, abc, pallet, janjon, safety_stock, transfer],
     position="hidden",
 )
 
@@ -83,7 +91,7 @@ st.sidebar.link_button("🔗 출하파트",
 st.sidebar.divider()
 
 # ── 페이지 메뉴 (기본 네비게이션 대체) ──
-for _p in (ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label, paint, abc, pallet, janjon):
+for _p in (ov5, coupang, jaego, warehouse, sheets, checks, lock, export_label, paint, abc, pallet, janjon, safety_stock, transfer):
     st.sidebar.page_link(_p, width='stretch')
 st.sidebar.divider()
 
