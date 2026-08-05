@@ -609,9 +609,9 @@ if uploaded:
                     합 = a["합친수량"]
                     daily = abc_avg.get(_norm_code(item["code"]))
                     if 합 > 0 and daily and daily > 0:
-                        days = 합 / daily
-                        가용일수_s = f"{days:.1f}일"
-                        예상소진일 = (_today + timedelta(days=round(days))).strftime("%Y-%m-%d")
+                        days_i = int(합 / daily)        # 내림(floor) — 양수라 int가 곧 내림
+                        가용일수_s = f"{days_i}일"
+                        예상소진일 = (_today + timedelta(days=days_i)).strftime("%Y-%m-%d")
                     else:
                         가용일수_s = "-"
                         예상소진일 = "-"
