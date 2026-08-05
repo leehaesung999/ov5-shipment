@@ -399,7 +399,7 @@ try:  # 단독 실행 시에만 (통합 Home.py에서 실행되면 무시)
     st.set_page_config(page_title="유통기한 재고 모니터", layout="wide", page_icon="📦")
 except Exception:
     pass
-st.title("📦 신규파우치 점검 프로그램")
+st.title("📦 리뉴얼 재고 출고 시점 점검")
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))

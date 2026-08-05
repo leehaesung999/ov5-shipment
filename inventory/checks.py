@@ -13,7 +13,7 @@ try:
     st.set_page_config(page_title="통합센터 재고 분석기", layout="wide")
 except Exception:
     pass
-st.title("🔎 점검 · 이중적치 / 하프도달 / 유통기한")
+st.title("🔎 일 점검(이중적치, 유통기한)")
 st.caption("이중적치 · OV5/OV6 하프도달 · 비Lock 유통기한 점검 → 화면 표시 + 엑셀 다운로드")
 show_help({
     "목적": "재고 이상(이중적치)과 유통기한 임박(하프도달) 품목을 자동 검출.",

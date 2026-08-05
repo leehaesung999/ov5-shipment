@@ -411,7 +411,7 @@ def _make_하대_template() -> bytes:
 
 
 # ---------- UI ----------
-st.title("📊 ABC 재배치 분석")
+st.title("📊 ABC분석 로케이션 변경안")
 sys.path.insert(0, str(HERE.parent))
 from page_help import show_help  # noqa: E402
 show_help({

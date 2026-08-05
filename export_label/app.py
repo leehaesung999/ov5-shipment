@@ -22,7 +22,7 @@ try:
 except Exception:
     pass
 
-st.title("🖨️ 수출 표식지")
+st.title("🖨️ 수출 표식지 출력")
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))

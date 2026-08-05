@@ -27,7 +27,7 @@ try:
 except Exception:
     pass
 
-st.title("🏬 분산재고 점검 프로그램")
+st.title("🏬 창고별 재고 유통기한 점검")
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))

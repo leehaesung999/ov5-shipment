@@ -20,7 +20,7 @@ from safety_stock import core, store  # noqa: E402
 
 KST = timezone(timedelta(hours=9))
 
-st.title("📐 안전재고 계산기")
+st.title("📐 BNF(비네이버) 안전재고 산출")
 st.caption("매월 CJ출고실적 1개만 올리면 12개월 누적으로 안전재고를 재계산합니다. "
            "비네이버(네이버·토스 제외)·딜 제외·박스/파레트 기준.")
 

@@ -886,7 +886,7 @@ try:  # 단독 실행 시에만 (통합 Home.py에서 실행되면 무시)
 except Exception:
     pass
 
-st.title('📦 BNF 파레트 구분기')
+st.title('📦 BNF(비네이버) 피킹지 표식지')
 st.caption('입고예정 Excel을 업로드하면 파레트 단위로 자동 구분합니다.')
 
 with st.sidebar:

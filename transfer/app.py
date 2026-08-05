@@ -20,7 +20,7 @@ from safety_stock import store          # noqa: E402
 
 KST = timezone(timedelta(hours=9))
 
-st.title("🚚 재고이동계획")
+st.title("🚚 BNF(비네이버) 재고이동 계획")
 baseline, bmeta = store.load_baseline()
 st.caption("기준(안전재고·Min·Max)은 '안전재고 계산기'에서 저장한 값 사용. "
            f"현재 기준: {bmeta.get('품목수','?')}품목 · 갱신 {bmeta.get('갱신','—')}")
@@ -121,6 +121,36 @@ def parse_events_sched(file, plan_d, lead_days):
     return out
 
 
+def _pallet_xlsx(rows, plan_d):
+    """이동_박스>0 품목을 'BNF 파레트 구분기' 입력형식으로.
+    헤더행에 'Item code' 포함(구분기 find_header_row 대응). 박스=이동_박스, Plt_1차=파레트환산."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.cell(1, 1, f"{plan_d} 재고이동 파레트 구분")
+    headers = ["Item code", "Item", "입수", "박스", "낱개", "소비기한",
+               "plt환산", "Plt_1차", "PLT 번호", "비 고", "순번"]
+    for j, h in enumerate(headers, 1):
+        ws.cell(2, j, h)
+    r = 3
+    for row in rows:
+        mb = row["★이동_박스"]
+        if not isinstance(mb, (int, float)) or mb <= 0:
+            continue
+        plt1 = row["파레트환산"]
+        ws.cell(r, 1, row["품목코드"])
+        ws.cell(r, 2, row["품목명"])
+        ws.cell(r, 3, row["입수"])
+        ws.cell(r, 4, int(mb))
+        ws.cell(r, 5, row["이동_EA"])
+        ws.cell(r, 6, "")                      # 소비기한(미사용)
+        ws.cell(r, 7, plt1)                    # plt환산
+        ws.cell(r, 8, plt1 if plt1 is not None else 0.0)   # Plt_1차(패킹 기준)
+        r += 1
+    out = io.BytesIO()
+    wb.save(out)
+    return out.getvalue()
+
+
 # ---------- 입력 ----------
 st.subheader("1️⃣ 입력 (재고 필수, 나머지 선택)")
 up_stock = st.file_uploader("재고입력 xlsx (A:품목코드 B:현재고 C:할당(선택))", type=["xlsx"], key="t_stock")
@@ -167,11 +197,21 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as xw:
             df.to_excel(xw, index=False, sheet_name="이동계획")
-        st.download_button("📥 이동계획 다운로드 (xlsx)", buf.getvalue(),
+
+        # 파레트 구분기용 파일 (박스=이동_박스, Plt_1차=파레트환산)
+        pbuf = _pallet_xlsx(rows, plan_date)
+
+        d1, d2 = st.columns(2)
+        d1.download_button("📥 이동계획 다운로드 (xlsx)", buf.getvalue(),
                            file_name=f"재고이동계획_{plan_date:%y%m%d}.xlsx",
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            width="stretch")
+        d2.download_button("🧱 파레트 구분기용 다운로드", pbuf,
+                           file_name=f"파레트입력_{plan_date:%y%m%d}.xlsx",
+                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                           width="stretch")
         st.caption("이동=MIN(요청,출고가능,할당) 박스. 파레트환산=이동박스÷하대박스수. "
-                   "'미충족_박스'>0=가용부족. 행사는 프리쉽일 하루만 반영(중복 방지).")
+                   "'미충족_박스'>0=가용부족. 행사는 프리쉽일 하루만 반영(중복 방지). "
+                   "🧱 다운로드 파일을 'BNF 파레트 구분기'에 업로드하면 파레트 배치가 나옵니다.")
     except Exception as e:
         st.error(f"산출 실패: {e}")

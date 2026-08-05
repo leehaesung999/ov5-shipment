@@ -24,11 +24,11 @@ coupang = st.Page(
     url_path="coupang",
 )
 jaego = st.Page(
-    "jaego/app.py", title="신규파우치 점검 프로그램", icon="📦",
+    "jaego/app.py", title="리뉴얼 재고 출고 시점 점검", icon="📦",
     url_path="jaego",
 )
 warehouse = st.Page(
-    "warehouse/app.py", title="분산재고 점검 프로그램", icon="🏬",
+    "warehouse/app.py", title="창고별 재고 유통기한 점검", icon="🏬",
     url_path="warehouse",
 )
 sheets = st.Page(
@@ -36,39 +36,39 @@ sheets = st.Page(
     url_path="sheets",
 )
 checks = st.Page(
-    "inventory/checks.py", title="점검 (이중적치·하프도달)", icon="🔎",
+    "inventory/checks.py", title="일 점검(이중적치, 유통기한)", icon="🔎",
     url_path="checks",
 )
 lock = st.Page(
-    "lock/app.py", title="LOCK 실사 프로그램", icon="🔒",
+    "lock/app.py", title="LOCK 실사지 출력", icon="🔒",
     url_path="lock",
 )
 export_label = st.Page(
-    "export_label/app.py", title="수출 표식지", icon="🖨️",
+    "export_label/app.py", title="수출 표식지 출력", icon="🖨️",
     url_path="export",
 )
 paint = st.Page(
-    "paint/app.py", title="창고 레이아웃 색칠", icon="🎨",
+    "paint/app.py", title="통합 기본로케이션 레이아웃", icon="🎨",
     url_path="paint",
 )
 abc = st.Page(
-    "abc_analysis/app.py", title="ABC 재배치 분석", icon="📊",
+    "abc_analysis/app.py", title="ABC분석 로케이션 변경안", icon="📊",
     url_path="abc",
 )
 pallet = st.Page(
-    "pallet/app.py", title="BNF 파레트 구분기", icon="🧱",
+    "pallet/app.py", title="BNF(비네이버) 피킹지 표식지", icon="🧱",
     url_path="pallet",
 )
 janjon = st.Page(
-    "janjon/app.py", title="잔존율 출고 판정", icon="📅",
+    "janjon/app.py", title="거래처별 잔존율", icon="📅",
     url_path="janjon",
 )
 safety_stock = st.Page(
-    "safety_stock/app.py", title="안전재고 계산기", icon="📐",
+    "safety_stock/app.py", title="BNF(비네이버) 안전재고 산출", icon="📐",
     url_path="safety",
 )
 transfer = st.Page(
-    "transfer/app.py", title="재고이동계획", icon="🚚",
+    "transfer/app.py", title="BNF(비네이버) 재고이동 계획", icon="🚚",
     url_path="transfer",
 )
 

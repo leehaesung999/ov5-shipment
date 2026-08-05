@@ -81,7 +81,7 @@ def edit_원본(src_path: Path, out_path: Path) -> dict:
     return {"총행수": total, "통과행수": kept, "결과파일": str(out_path)}
 
 
-st.title("🎨 창고 레이아웃 색칠")
+st.title("🎨 통합 기본로케이션 레이아웃")
 st.caption(
     "ERP `Item_*.xlsx` 원본을 업로드하면 자동으로 **편집본**(고정로케이션 · Item code 있음 · OV 제외) "
     "과 **색칠본**을 생성합니다."

@@ -28,7 +28,7 @@ try:
 except Exception:
     pass
 
-st.title("🔒 LOCK 실사 프로그램")
+st.title("🔒 LOCK 실사지 출력")
 import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
