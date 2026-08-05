@@ -9,7 +9,8 @@ import pandas as pd
 import io
 import json
 import re
-from datetime import date
+import base64
+from datetime import date, timedelta
 from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -17,6 +18,7 @@ from openpyxl.utils import get_column_letter
 
 
 _XLSX_COLS = ["창고", "품목코드", "품목명", "등록 유통기한", "리뉴얼구분", "창고입고", "리뉴얼(락)",
+              "합친수량(Box)", "일평균출고", "가용일수", "예상소진일",
               "출고진행 유통기한", "최신 출고 유통기한", "상태", "비고", "담당자", "확인여부"]
 _XLSX_FILL = {"red": "FFCCCC", "orange": "FFE0B2", "gray": "D9D9D9", "": "FFFFFF"}
 
@@ -37,7 +39,7 @@ def build_result_xlsx(df) -> bytes:
             fill = PatternFill("solid", fgColor=_XLSX_FILL.get(r.get("_color", ""), "FFFFFF"))
             for cell in ws[ws.max_row]:
                 cell.fill = fill
-    widths = [8, 11, 30, 13, 10, 18, 24, 20, 16, 14, 40, 12, 8]
+    widths = [8, 11, 30, 13, 10, 18, 24, 13, 11, 10, 12, 20, 16, 14, 40, 12, 8]
     for i, w in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.freeze_panes = "A2"
@@ -79,6 +81,7 @@ COL_품목명     = 5
 COL_유통기한   = 9
 COL_현재고Box = 11
 COL_출고예정   = 14
+COL_출고가능Box = 18
 COL_LOCK      = 23
 
 APP_DIR        = Path(__file__).parent
@@ -294,6 +297,57 @@ def set_scope(key: str, scope: str) -> None:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+# ─── ABC 프로그램 출고 데이터(일평균출고) 연계 — 같은 Supabase(app_settings) ──
+
+ABC_INDEX_KEY = "abc_monthly_index"
+
+
+def _abc_month_key(ym: str) -> str:
+    return f"abc_monthly_b64_{ym.replace('-', '_')}"
+
+
+def _norm_code(v) -> str:
+    return re.sub(r"\.0$", "", str(v).strip())
+
+
+@st.cache_data(show_spinner=False)
+def load_abc_daily_avg(n_months: int = 3):
+    """ABC 프로그램의 최근 n개월 '일평균출고'를 품번별 평균으로 반환.
+    반환: ({품번: 일평균출고(float)}, 사용월 리스트)  ·  없으면 ({}, [])."""
+    cli = _settings_client()
+    if cli is None:
+        return {}, []
+    try:
+        r = cli.table("app_settings").select("value").eq("key", ABC_INDEX_KEY).execute()
+        idx = (r.data[0].get("value") or []) if r.data else []
+    except Exception:
+        return {}, []
+    months = sorted(set(idx))[-n_months:]           # 최근 n개월
+    frames = []
+    for ym in months:
+        try:
+            rr = cli.table("app_settings").select("value").eq(
+                "key", _abc_month_key(ym)).execute()
+            v = rr.data[0]["value"] if rr.data else None
+            if not v:
+                continue
+            d = pd.read_excel(io.BytesIO(base64.b64decode(v)), sheet_name=0)
+            d.columns = [str(c).strip() for c in d.columns]
+            if "품번" not in d.columns or "일평균출고" not in d.columns:
+                continue
+            dd = d[["품번", "일평균출고"]].copy()
+            dd["품번"] = dd["품번"].map(_norm_code)
+            dd["일평균출고"] = pd.to_numeric(dd["일평균출고"], errors="coerce").fillna(0)
+            frames.append(dd)
+        except Exception:
+            continue
+    if not frames:
+        return {}, months
+    allm = pd.concat(frames, ignore_index=True)
+    avg = allm.groupby("품번")["일평균출고"].mean()   # 등장한 월들의 평균
+    return {k: float(v) for k, v in avg.items()}, months
+
+
 # ─── 수량 파싱 ─────────────────────────────────────────────────────────────
 
 def has_qty(val) -> bool:
@@ -315,8 +369,13 @@ def to_exp_str(raw) -> str | None:
 # ─── 분석 로직 ─────────────────────────────────────────────────────────────
 
 def _to_num(v) -> float:
+    if pd.isna(v):
+        return 0.0
+    s = str(v).replace(",", "").strip()
+    if s == "" or s.lower() in ("nan", "none"):
+        return 0.0
     try:
-        return float(str(v).replace(",", "").strip() or 0)
+        return float(s)
     except Exception:
         return 0.0
 
@@ -331,10 +390,11 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str, scope: str = "미
     mask    = df.iloc[:, COL_품목코드].astype(str).str.strip() == code.strip()
     item_df = df[mask]
 
+    _EMPTY_QTY = {"선입가용": 0.0, "동일미락": 0.0, "합친수량": 0.0}
     if item_df.empty:
         return {"품목명": "-", "status": "미입고", "color": "gray",
                 "note": "품목코드가 이 창고 파일에 없음", "출고중": [],
-                "입고": "❌ 미입고(품목없음)", "락": "-", "락누락": False}
+                "입고": "❌ 미입고(품목없음)", "락": "-", "락누락": False, **_EMPTY_QTY}
 
     품목명 = str(item_df.iloc[0, COL_품목명])
 
@@ -343,12 +403,14 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str, scope: str = "미
         exp = to_exp_str(row.iloc[COL_유통기한])
         if exp is None:
             continue
-        e = exp_info.setdefault(exp, {"has_lock_free": False, "in_출고": False, "qty": 0.0})
+        e = exp_info.setdefault(exp, {"has_lock_free": False, "in_출고": False,
+                                      "qty": 0.0, "avail": 0.0})
         if not has_qty(row.iloc[COL_LOCK]):
             e["has_lock_free"] = True
         if has_qty(row.iloc[COL_출고예정]):
             e["in_출고"] = True
-        e["qty"] += _to_num(row.iloc[COL_현재고Box])
+        e["qty"]   += _to_num(row.iloc[COL_현재고Box])
+        e["avail"] += _to_num(row.iloc[COL_출고가능Box])   # 출고가능(Box) = 락·이동 제외 가용
 
     all_exps    = sorted(exp_info.keys())
     출고중_목록 = [e for e in all_exps if exp_info[e]["in_출고"]]
@@ -356,7 +418,7 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str, scope: str = "미
     if target_exp not in all_exps:
         return {"품목명": 품목명, "status": "미입고", "color": "gray",
                 "note": f"등록 유통기한({target_exp}) 재고가 이 창고에 없음", "출고중": 출고중_목록,
-                "입고": "❌ 미입고(유통기한 없음)", "락": "-", "락누락": False}
+                "입고": "❌ 미입고(유통기한 없음)", "락": "-", "락누락": False, **_EMPTY_QTY}
 
     t = exp_info[target_exp]
     입고 = "✅ 입고" if t["qty"] > 0 else "✅ 입고(현재고 0)"
@@ -378,6 +440,11 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str, scope: str = "미
     직전        = before_exps[-1] if before_exps else None
     이후_출고   = [e for e in after_exps if exp_info[e]["in_출고"]]
 
+    # 지금 나갈 수 있는 재고: 빠른 유통기한 가용 + 동일 유통기한 락 안 걸린 가용
+    선입가용 = sum(exp_info[e]["avail"] for e in before_exps)
+    동일미락 = t["avail"]
+    합친수량 = 선입가용 + 동일미락
+
     if 이후_출고:
         status, color, note = "위험", "red", f"이후 유통기한 출고진행 중: {', '.join(이후_출고)}"
     elif t["in_출고"]:
@@ -390,7 +457,8 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str, scope: str = "미
         note = "락 없는 동일 유통기한 재고 있음" if t["has_lock_free"] else "출고진행 없음"
 
     return {"품목명": 품목명, "status": status, "color": color, "note": note,
-            "출고중": 출고중_목록, "입고": 입고, "락": 락, "락누락": 락누락}
+            "출고중": 출고중_목록, "입고": 입고, "락": 락, "락누락": 락누락,
+            "선입가용": 선입가용, "동일미락": 동일미락, "합친수량": 합친수량}
 
 
 # ─── UI ───────────────────────────────────────────────────────────────────
@@ -524,6 +592,8 @@ if uploaded:
         if not sel_whs:
             sel_whs = _whs_all
         scope_map = load_scopes()
+        abc_avg, abc_months = load_abc_daily_avg(3)
+        _today = date.today()
         with st.spinner("분석 중..."):
             rows = []
             for wh in sel_whs:
@@ -535,6 +605,16 @@ if uploaded:
                     if a["color"] == "gray" and wh != "IC930":
                         continue
                     출고중 = a["출고중"]
+                    # 지금 나갈 수 있는 재고(합친수량) ÷ 3개월 일평균출고 → 가용일수·예상소진일
+                    합 = a["합친수량"]
+                    daily = abc_avg.get(_norm_code(item["code"]))
+                    if 합 > 0 and daily and daily > 0:
+                        days = 합 / daily
+                        가용일수_s = f"{days:.1f}일"
+                        예상소진일 = (_today + timedelta(days=round(days))).strftime("%Y-%m-%d")
+                    else:
+                        가용일수_s = "-"
+                        예상소진일 = "-"
                     rows.append(
                         {
                             "창고":            wh,
@@ -544,6 +624,10 @@ if uploaded:
                             "리뉴얼구분":       sc,
                             "창고입고":         a["입고"],
                             "리뉴얼(락)":       a["락"],
+                            "합친수량(Box)":    round(합),
+                            "일평균출고":       (round(daily, 1) if daily else "-"),
+                            "가용일수":         가용일수_s,
+                            "예상소진일":       예상소진일,
                             "출고진행 유통기한":  ", ".join(출고중) if 출고중 else "-",
                             "최신 출고 유통기한": max(출고중) if 출고중 else "-",
                             "상태":            a["status"],
@@ -574,6 +658,14 @@ if uploaded:
                   help="동일/직전 유통기한 출고진행 중")
         c5.metric("❌ 미입고", int((result_df["_color"] == "gray").sum()),
                   help="품목/등록 유통기한 재고가 이 창고에 없음")
+
+        if abc_months:
+            st.caption(f"📈 **가용일수 = 합친수량(선입가용+동일미락) ÷ 일평균출고** · "
+                       f"일평균출고 기준: ABC 최근 {len(abc_months)}개월 {', '.join(abc_months)} 평균 "
+                       f"· 예상소진일 = 오늘({_today:%Y-%m-%d}) + 가용일수")
+        else:
+            st.caption("📈 가용일수·예상소진일: ABC 월별 출고 데이터가 없어 계산 불가(–). "
+                       "ABC분석 프로그램에 월별 데이터를 등록하면 자동 반영됩니다.")
 
         # ── 확인 체크 로드 (+ 엑셀용 확인여부 열) ──
         checks = load_checks()
@@ -684,6 +776,9 @@ if uploaded:
 - **리뉴얼(락)** : 리뉴얼구분에 비춘 락 상태
   - **전량** → 🔒 전량 락(정상) / 🔴 **락 누락 의심**(전량인데 미락 재고 있음)
   - **부분** → 🔓 부분(락 해제분 정상)
+- **합친수량(Box)** : 지금 나갈 수 있는 재고 = 선입가용(등록보다 빠른 유통기한 출고가능) + 동일미락(동일 유통기한 락 안 걸린 출고가능)
+- **일평균출고** : ABC분석 프로그램의 최근 3개월 일평균출고 평균 (품번별)
+- **가용일수 / 예상소진일** : 합친수량 ÷ 일평균출고 = 며칠치 남았는지 · 오늘 + 가용일수 = 대략 소진 시점
         """)
 
         st.markdown("""
