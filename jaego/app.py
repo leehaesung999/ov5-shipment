@@ -625,7 +625,7 @@ if uploaded:
                             "창고입고":         a["입고"],
                             "리뉴얼(락)":       a["락"],
                             "합친수량(Box)":    round(합),
-                            "일평균출고":       (round(daily, 1) if daily else "-"),
+                            "일평균출고":       (round(daily) if daily else "-"),
                             "가용일수":         가용일수_s,
                             "예상소진일":       예상소진일,
                             "출고진행 유통기한":  ", ".join(출고중) if 출고중 else "-",
