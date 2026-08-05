@@ -111,6 +111,58 @@ def _row(code, b, ip, plt, cur, mn, mx, req, evt, inc, av, alloc, movable,
     }
 
 
+# ---------- 창고 배정 (한 창고에서만, FEFO 우선, 부족시 경고) ----------
+# 소스 창고 우선순위(동점 유통기한 시): IC930 > IC920 > IC100
+WH_PRIORITY = {"IC930": 0, "IC920": 1, "IC100": 2}
+WH_SOURCES = ("IC930", "IC920", "IC100")
+
+
+def allocate_warehouse(rows, loc_inv, sources=WH_SOURCES):
+    """이동_박스>0 각 품목에 출고 창고 1개 배정.
+    loc_inv = {코드: {창고: {"avail": 출고가능박스, "exp": 최단소비기한(비교가능값)}}}
+    규칙: 단독으로 이동량 채울 수 있는 창고 중 유통기한 가장 빠른 것(동점 IC930우선).
+          없으면 배정=분할필요(경고).
+    각 row에 컬럼 추가: 배정창고 / 배정재고(Box) / 최단유통기한 / 창고재고표기 / 창고경고
+    """
+    prio = {w: WH_PRIORITY.get(w, 9) for w in sources}
+    for r in rows:
+        mb = r.get("★이동_박스")
+        if not isinstance(mb, (int, float)) or mb <= 0:
+            r["배정창고"] = ""; r["배정재고(Box)"] = ""; r["최단유통기한"] = ""
+            r["창고재고"] = ""; r["창고경고"] = ""
+            continue
+        whs = (loc_inv.get(r["품목코드"]) or {})
+        # 소스 창고만
+        cand = {w: whs[w] for w in sources if w in whs and (whs[w].get("avail") or 0) > 0}
+        note = " ".join(f"{w}:{int(cand[w]['avail'])}" for w in sources if w in cand) or "재고없음"
+        # 단독 가능 창고
+        solo = [w for w in cand if (cand[w].get("avail") or 0) >= mb]
+        if solo:
+            solo.sort(key=lambda w: (cand[w].get("exp") or 99999999, prio.get(w, 9)))
+            best = solo[0]
+            r["배정창고"] = best
+            r["배정재고(Box)"] = int(cand[best]["avail"])
+            r["최단유통기한"] = _fmt_exp(cand[best].get("exp"))
+            r["창고재고"] = note
+            r["창고경고"] = ""
+        else:
+            total = sum((cand[w].get("avail") or 0) for w in cand)
+            r["배정창고"] = "분할필요" if cand else "재고없음"
+            r["배정재고(Box)"] = int(total)
+            r["최단유통기한"] = ""
+            r["창고재고"] = note
+            r["창고경고"] = (f"⚠️ 단독가능 창고없음(이동 {int(mb)}박스 > 각 창고재고) — 분할검토"
+                            if cand else f"⚠️ 소스창고에 재고없음(이동 {int(mb)}박스)")
+    return rows
+
+
+def _fmt_exp(v):
+    if v is None:
+        return ""
+    s = str(int(v)) if isinstance(v, (int, float)) else str(v)
+    return f"{s[:4]}-{s[4:6]}-{s[6:8]}" if len(s) == 8 and s.isdigit() else s
+
+
 def summarize(rows):
     mv = [r for r in rows if isinstance(r["★이동_박스"], (int, float)) and r["★이동_박스"] > 0]
     return {
@@ -121,4 +173,6 @@ def summarize(rows):
         "미입력": sum(1 for r in rows if r["사유"] == "미입력"),
         "가용부족": sum(1 for r in rows if r["사유"] in ("할당제한", "출고가능제한")),
         "종료제외": sum(1 for r in rows if r["사유"] == "종료(제외)"),
+        "분할필요": sum(1 for r in rows if r.get("배정창고") == "분할필요"),
+        "창고재고없음": sum(1 for r in rows if r.get("배정창고") == "재고없음"),
     }

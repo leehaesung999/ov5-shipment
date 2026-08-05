@@ -99,6 +99,35 @@ def history_meta() -> dict | None:
         return None
 
 
+# ---------- 반영 완료된 행사(header_id) 목록 — 신규만 반영 위한 중복방지 ----------
+EKEY = "ss_events_reflected"
+
+
+def load_reflected_events() -> set:
+    """이미 반영 완료한 행사 header_id 집합. Supabase 우선, 없으면 빈 set."""
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", EKEY).execute()
+            if r.data and r.data[0].get("value") is not None:
+                return set(str(x) for x in (r.data[0]["value"] or []))
+        except Exception:
+            pass
+    return set()
+
+
+def add_reflected_events(header_ids) -> bool:
+    """header_id들을 반영완료 목록에 추가 저장."""
+    ids = load_reflected_events() | set(str(x) for x in header_ids)
+    if not use_supabase():
+        return False
+    try:
+        _sb().table("app_settings").upsert(
+            {"key": EKEY, "value": sorted(ids)}).execute()
+        return True
+    except Exception:
+        return False
+
+
 def load_master() -> dict:
     if MASTER.exists():
         with open(MASTER, "r", encoding="utf-8") as f:

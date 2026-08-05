@@ -98,35 +98,74 @@ def parse_ended(file):
     return s
 
 
-def parse_events_sched(file, plan_d, lead_days):
-    """행사일정 export: S(19)=item_number, Q(17)=first_del_date, W(23)=tot_qty,
-    J(10)=current_flag. 프리쉽일(=행사시작-리드타임)==계획일자 인 것만 합산."""
-    out = {}
+def parse_events_new(file, plan_d, reflected):
+    """행사양식 export에서 '신규' 이벤트만 추출(중복 방지).
+    열(0-based): header_id=7, current_flag=9, last_del_date=17, item_number=18, tot_qty=22.
+    신규 조건: current_flag=Y  AND  last_del_date≥계획일자(안 지난 것)  AND  header_id 미반영.
+    반환: (events{코드:수량}, new_ids{header_id}, 통계dict)"""
+    events, new_ids = {}, set()
+    n_new = n_reflected = n_past = n_flag = 0
     for r in _rows(file):
         if len(r) < 23:
             continue
-        if str(r[9]).strip() != "Y":     # current_flag
+        hid = r[7]
+        if hid is None:
             continue
-        fd = r[16]
-        if not hasattr(fd, "date") and not isinstance(fd, date):
+        hid = str(hid).strip()
+        if str(r[9]).strip() != "Y":                 # 현행만
+            n_flag += 1
             continue
-        fdd = fd.date() if hasattr(fd, "date") else fd
-        preship = fdd - timedelta(days=lead_days)
-        if preship != plan_d:
+        ld = r[17]                                    # last_del_date
+        ldd = (ld.date() if hasattr(ld, "date") else ld) if ld is not None else None
+        if isinstance(ldd, date) and ldd < plan_d:    # 이미 지난 행사
+            n_past += 1
+            continue
+        if hid in reflected:                          # 이미 반영됨
+            n_reflected += 1
             continue
         c = _code(r[18])
         q = r[22]
-        if c and isinstance(q, (int, float)):
-            out[c] = out.get(c, 0) + q
+        if c and isinstance(q, (int, float)) and q:
+            events[c] = events.get(c, 0) + q
+            new_ids.add(hid)
+            n_new += 1
+    return events, new_ids, {"신규": n_new, "이미반영": n_reflected,
+                             "지난행사": n_past, "비현행": n_flag}
+
+
+def parse_location(file, sources):
+    """로케이션별 재고조회 → {코드: {창고: {avail:출고가능박스, exp:최단소비기한}}}.
+    열(0-based): Inventory=0, 제품코드=4, 소비기한=9(YYYYMMDD), 출고가능(Box)=18."""
+    out = {}
+    for r in _rows(file):
+        if len(r) < 19:
+            continue
+        wh = str(r[0]).strip() if r[0] is not None else ""
+        if wh not in sources:
+            continue
+        c = _code(r[4])
+        box = r[18]
+        if not c or not isinstance(box, (int, float)) or box <= 0:
+            continue
+        exp = r[9]
+        try:
+            exp = int(str(int(exp)) if isinstance(exp, (int, float)) else str(exp).replace("-", "")[:8])
+        except (TypeError, ValueError):
+            exp = 99999999
+        d = out.setdefault(c, {}).setdefault(wh, {"avail": 0.0, "exp": exp})
+        d["avail"] += box
+        d["exp"] = min(d["exp"], exp)          # 창고 대표 = 최단 유통기한
     return out
 
 
-def _pallet_xlsx(rows, plan_d):
+def _pallet_xlsx(rows, plan_d, only_wh=None):
     """이동_박스>0 품목을 'BNF 파레트 구분기' 입력형식으로.
+    only_wh 지정 시 그 배정창고 품목만(창고별 피킹). None이면 전체.
     헤더행에 'Item code' 포함(구분기 find_header_row 대응). 박스=이동_박스, Plt_1차=파레트환산."""
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.cell(1, 1, f"{plan_d} 재고이동 파레트 구분")
+    title = f"{plan_d} 재고이동 파레트 구분" + (f" [{only_wh}]" if only_wh else "")
+    ws.cell(1, 1, title)
     headers = ["Item code", "Item", "입수", "박스", "낱개", "소비기한",
                "plt환산", "Plt_1차", "PLT 번호", "비 고", "순번"]
     for j, h in enumerate(headers, 1):
@@ -136,6 +175,8 @@ def _pallet_xlsx(rows, plan_d):
         mb = row["★이동_박스"]
         if not isinstance(mb, (int, float)) or mb <= 0:
             continue
+        if only_wh is not None and row.get("배정창고") != only_wh:
+            continue
         plt = row["하대박스수"]                 # 1파레트당 박스수(구분기 plt환산=박스/파레트 분할기준)
         plt1 = row["파레트환산"]                # 파레트 점유율(=이동박스/하대)
         ws.cell(r, 1, row["품목코드"])
@@ -143,9 +184,10 @@ def _pallet_xlsx(rows, plan_d):
         ws.cell(r, 3, row["입수"])
         ws.cell(r, 4, int(mb))
         ws.cell(r, 5, row["이동_EA"])
-        ws.cell(r, 6, "")                      # 소비기한(미사용)
+        ws.cell(r, 6, row.get("최단유통기한", "") or "")   # 소비기한(배정창고 최단)
         ws.cell(r, 7, plt if plt else 0)       # plt환산 = 하대박스수(파레트당 박스수)
         ws.cell(r, 8, plt1 if plt1 is not None else 0.0)   # Plt_1차 = 파레트 점유율(패킹 기준)
+        ws.cell(r, 10, row.get("배정창고", "") or "")       # 비고 = 배정창고
         r += 1
     out = io.BytesIO()
     wb.save(out)
@@ -155,15 +197,16 @@ def _pallet_xlsx(rows, plan_d):
 # ---------- 입력 ----------
 st.subheader("1️⃣ 입력 (재고 필수, 나머지 선택)")
 up_stock = st.file_uploader("재고입력 xlsx (A:품목코드 B:현재고 C:할당(선택))", type=["xlsx"], key="t_stock")
-with st.expander("추가 입력 (출고가능·입고예정·행사·종료)"):
+with st.expander("추가 입력 (출고가능·입고예정·종료·로케이션재고)"):
     up_avail = st.file_uploader("출고가능재고 (WMS export)", type=["xlsx"], key="t_avail")
     up_inc = st.file_uploader("입고예정", type=["xlsx"], key="t_inc")
-    up_sch = st.file_uploader("행사일정 (시스템 export)", type=["xlsx"], key="t_sch")
     up_end = st.file_uploader("종료품목 (A:CJ코드)", type=["xlsx"], key="t_end")
+    up_loc = st.file_uploader("로케이션별 재고조회 (창고 배정용, IC930/920/100)", type=["xlsx"], key="t_loc")
 
-st.subheader("2️⃣ 수동 이벤트 (선택)")
-ev_df = st.data_editor(pd.DataFrame({"품목코드": ["", "", ""], "추가수량(EA)": [None, None, None]}),
-                       num_rows="dynamic", width="stretch", key="t_ev")
+st.subheader("2️⃣ 행사 이벤트 (선택)")
+up_evt = st.file_uploader("행사양식 xlsx 업로드 — 신규(미반영)만 자동 반영", type=["xlsx"], key="t_evt")
+st.caption("header_id로 중복 판정. 현행(current_flag=Y)·안 지난 행사(last_del_date≥계획일자) 중 "
+           "아직 반영 안 한 것만 이동에 더해집니다. 산출 후 '반영완료'를 눌러야 다음에 제외됩니다.")
 
 # ---------- 산출 ----------
 if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is None):
@@ -172,47 +215,87 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
         avail = parse_avail(up_avail) if up_avail else None
         incoming = parse_incoming(up_inc) if up_inc else {}
         ended = parse_ended(up_end) if up_end else set()
-        events = {}
-        if up_sch:
-            events.update(parse_events_sched(up_sch, plan_date, lead))
-        for _, row in ev_df.iterrows():          # 수동 이벤트 합산
-            c = _code(row["품목코드"])
-            q = row["추가수량(EA)"]
-            if c and isinstance(q, (int, float)) and q:
-                events[c] = events.get(c, 0) + q
+        events, new_ids, estat = {}, set(), {}
+        if up_evt:
+            reflected = store.load_reflected_events()
+            events, new_ids, estat = parse_events_new(up_evt, plan_date, reflected)
 
         rows = T.compute_transfer(baseline, stock, avail, incoming, events, ended)
-        summ = T.summarize(rows)
+        if up_loc:                              # 창고 배정(로케이션재고)
+            loc_inv = parse_location(up_loc, T.WH_SOURCES)
+            T.allocate_warehouse(rows, loc_inv)
         df = pd.DataFrame(rows)
-
-        m = st.columns(5)
-        m[0].metric("이동 품목", f"{summ['이동품목수']:,}")
-        m[1].metric("총 이동_박스", f"{summ['총이동_박스']:,}")
-        m[2].metric("총 파레트", f"{summ['총파레트']}")
-        m[3].metric("가용부족", f"{summ['가용부족']}")
-        m[4].metric("종료제외/미입력", f"{summ['종료제외']}/{summ['미입력']}")
-
-        show = df[df["사유"] != "미입력"] if len(stock) < len(baseline) else df
-        st.dataframe(show, width="stretch", height=460)
-
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as xw:
             df.to_excel(xw, index=False, sheet_name="이동계획")
-
-        # 파레트 구분기용 파일 (박스=이동_박스, Plt_1차=파레트환산)
-        pbuf = _pallet_xlsx(rows, plan_date)
-
-        d1, d2 = st.columns(2)
-        d1.download_button("📥 이동계획 다운로드 (xlsx)", buf.getvalue(),
-                           file_name=f"재고이동계획_{plan_date:%y%m%d}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           width="stretch")
-        d2.download_button("🧱 파레트 구분기용 다운로드", pbuf,
-                           file_name=f"파레트입력_{plan_date:%y%m%d}.xlsx",
-                           mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                           width="stretch")
-        st.caption("이동=MIN(요청,출고가능,할당) 박스. 파레트환산=이동박스÷하대박스수. "
-                   "'미충족_박스'>0=가용부족. 행사는 프리쉽일 하루만 반영(중복 방지). "
-                   "🧱 다운로드 파일을 'BNF 파레트 구분기'에 업로드하면 파레트 배치가 나옵니다.")
+        # 창고별 파레트 파일 (배정창고 있는 경우)
+        wh_pallets = {}
+        if up_loc:
+            for wh in T.WH_SOURCES:
+                if any(r.get("배정창고") == wh and isinstance(r.get("★이동_박스"), (int, float))
+                       and r["★이동_박스"] > 0 for r in rows):
+                    wh_pallets[wh] = _pallet_xlsx(rows, plan_date, only_wh=wh)
+        # 세션에 저장(반영완료 버튼이 결과를 유지하도록)
+        st.session_state["t_result"] = {
+            "df": df, "summ": T.summarize(rows),
+            "xlsx": buf.getvalue(), "pallet": _pallet_xlsx(rows, plan_date),
+            "wh_pallets": wh_pallets,
+            "estat": estat, "new_ids": sorted(new_ids),
+            "hide_missing": len(stock) < len(baseline),
+        }
     except Exception as e:
         st.error(f"산출 실패: {e}")
+
+# ---------- 결과 표시 (세션 유지) ----------
+res = st.session_state.get("t_result")
+if res:
+    summ = res["summ"]; df = res["df"]
+    m = st.columns(5)
+    m[0].metric("이동 품목", f"{summ['이동품목수']:,}")
+    m[1].metric("총 이동_박스", f"{summ['총이동_박스']:,}")
+    m[2].metric("총 파레트", f"{summ['총파레트']}")
+    m[3].metric("가용부족", f"{summ['가용부족']}")
+    m[4].metric("분할필요/재고없음", f"{summ.get('분할필요',0)}/{summ.get('창고재고없음',0)}")
+
+    # 창고 배정 경고 (분할필요/재고없음)
+    warn_rows = [r for r in df.to_dict("records") if r.get("창고경고")]
+    if warn_rows:
+        with st.expander(f"⚠️ 창고 단독배정 불가 {len(warn_rows)}품목 — 분할/재고 검토 필요", expanded=True):
+            wdf = pd.DataFrame([{"품목코드": r["품목코드"], "품목명": r["품목명"],
+                                 "이동_박스": r["★이동_박스"], "배정창고": r["배정창고"],
+                                 "창고재고": r["창고재고"], "경고": r["창고경고"]} for r in warn_rows])
+            st.dataframe(wdf, width="stretch", hide_index=True)
+
+    # 행사 반영 요약 + 반영완료
+    est = res.get("estat") or {}
+    if est:
+        st.info(f"행사: 신규 {est.get('신규',0)}건 반영 · 이미반영 {est.get('이미반영',0)}건 제외 · "
+                f"지난행사 {est.get('지난행사',0)}건 · 비현행 {est.get('비현행',0)}건")
+        if res.get("new_ids"):
+            if st.button(f"✅ 신규 행사 {len(res['new_ids'])}건 반영완료 처리", type="secondary"):
+                ok = store.add_reflected_events(res["new_ids"])
+                st.success(f"{len(res['new_ids'])}건 반영완료 기록"
+                           + (" (Supabase)" if ok else " (로컬)") + " — 다음 업로드부터 제외됩니다")
+
+    show = df[df["사유"] != "미입력"] if res["hide_missing"] else df
+    st.dataframe(show, width="stretch", height=460)
+
+    MIME = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    d1, d2 = st.columns(2)
+    d1.download_button("📥 이동계획 다운로드 (xlsx)", res["xlsx"],
+                       file_name=f"재고이동계획_{plan_date:%y%m%d}.xlsx", mime=MIME, width="stretch")
+    d2.download_button("🧱 파레트 구분기용 (전체)", res["pallet"],
+                       file_name=f"파레트입력_{plan_date:%y%m%d}.xlsx", mime=MIME, width="stretch")
+
+    # 창고별 파레트 다운로드 (피킹은 창고별로)
+    wp = res.get("wh_pallets") or {}
+    if wp:
+        st.markdown("**🏬 창고별 파레트 구분기용** (창고별 피킹)")
+        cols = st.columns(len(wp))
+        for i, (wh, data) in enumerate(wp.items()):
+            cols[i].download_button(f"🧱 {wh}", data,
+                                    file_name=f"파레트입력_{wh}_{plan_date:%y%m%d}.xlsx",
+                                    mime=MIME, width="stretch", key=f"wp_{wh}")
+    st.caption("이동=MIN(요청,출고가능,할당) 박스. 행사는 header_id로 신규만 반영(중복 방지). "
+               "창고배정=단독가능 창고 중 유통기한 빠른 것(동점 IC930). 분할필요/재고없음은 ⚠️경고. "
+               "🧱 창고별 파일을 각 창고 'BNF 파레트 구분기'에 올리면 창고별 피킹 파레트가 나옵니다.")
