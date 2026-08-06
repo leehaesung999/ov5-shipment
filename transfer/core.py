@@ -89,6 +89,18 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
 def _row(code, b, ip, plt, cur, mn, mx, req, evt, inc, av, alloc, movable,
          move_box, short_box, reason):
     move_ea = (move_box * ip) if move_box else 0
+    # 소진경고: 현재고가 안전재고(SS) 밑으로 = 예상보다 빨리 소진(행사 초과 등).
+    #   보충은 매일 Max까지 따라가지만, 리드타임(수일) 동안은 SS가 완충. SS를
+    #   이미 까먹었다면 리드타임 내 결품 위험 → 사람이 확인하라는 신호(공급 로직은 불변).
+    ss = b.get("ss") or 0
+    if cur is None or reason == "종료(제외)":
+        warn = ""
+    elif cur <= 0:
+        warn = "🔴 결품(현재고 0이하)"
+    elif ss and cur <= ss:
+        warn = f"🟠 안전재고({int(ss)}) 이하 — 소진 빠름(행사 초과 등 점검)"
+    else:
+        warn = ""
     return {
         "품목코드": code,
         "품목명": b.get("nm", ""),
@@ -107,6 +119,7 @@ def _row(code, b, ip, plt, cur, mn, mx, req, evt, inc, av, alloc, movable,
         "하대박스수": plt,
         "파레트환산": round(move_box / plt, 2) if (plt and move_box) else (0 if plt else None),
         "사유": reason,
+        "소진경고": warn,
         "비고": b.get("note", ""),
     }
 
@@ -175,4 +188,6 @@ def summarize(rows):
         "종료제외": sum(1 for r in rows if r["사유"] == "종료(제외)"),
         "분할필요": sum(1 for r in rows if r.get("배정창고") == "분할필요"),
         "창고재고없음": sum(1 for r in rows if r.get("배정창고") == "재고없음"),
+        "결품": sum(1 for r in rows if str(r.get("소진경고", "")).startswith("🔴")),
+        "안전재고이하": sum(1 for r in rows if str(r.get("소진경고", "")).startswith("🟠")),
     }

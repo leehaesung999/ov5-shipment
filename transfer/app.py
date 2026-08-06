@@ -293,7 +293,19 @@ if res:
     m[1].metric("총 이동_박스", f"{summ['총이동_박스']:,}")
     m[2].metric("총 파레트", f"{summ['총파레트']}")
     m[3].metric("가용부족", f"{summ['가용부족']}")
-    m[4].metric("분할필요/재고없음", f"{summ.get('분할필요',0)}/{summ.get('창고재고없음',0)}")
+    m[4].metric("결품/안전재고이하", f"{summ.get('결품',0)}/{summ.get('안전재고이하',0)}")
+
+    # 소진 경고 (행사 초과 등으로 안전재고 밑까지 소진 / 결품)
+    burn_rows = [r for r in df.to_dict("records") if r.get("소진경고")]
+    if burn_rows:
+        with st.expander(f"🟠 소진경고 {len(burn_rows)}품목 — 안전재고 이하/결품 (행사 초과 등 점검)",
+                         expanded=True):
+            st.caption("현재고가 안전재고 밑으로 내려간 품목입니다. 공급은 매일 보충으로 이어가되, "
+                       "행사가 계획보다 많이 나가는지 확인하세요. (자동 추가공급은 하지 않음)")
+            bdf = pd.DataFrame([{"품목코드": r["품목코드"], "품목명": r["품목명"],
+                                 "현재고": r["현재고"], "Min": r["Min"], "이동_박스": r["★이동_박스"],
+                                 "사유": r["사유"], "경고": r["소진경고"]} for r in burn_rows])
+            st.dataframe(bdf, width="stretch", hide_index=True)
 
     # 창고 배정 경고 (분할필요/재고없음)
     warn_rows = [r for r in df.to_dict("records") if r.get("창고경고")]
