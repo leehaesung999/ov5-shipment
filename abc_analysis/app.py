@@ -25,7 +25,9 @@ import streamlit as st
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))       # 레포 루트 (공용 master_hub)
 import abc_core as core  # noqa: E402  (최상위 core 패키지와 이름 충돌 방지)
+from master_hub import store as hub  # noqa: E402
 
 TMP = HERE / "_tmp"
 TMP.mkdir(exist_ok=True)
@@ -324,6 +326,17 @@ def _apply_현재로케_update(update_bytes: bytes) -> dict:
     return {"applied": len(matched), "unmatched": unmatched}
 
 
+def _hub_to_xlsx(mapping: dict, value_col: str) -> bytes:
+    """공용 허브 {코드:값} → (품번, value_col) 2컬럼 xlsx 바이트.
+    기존 _apply_*_update 가 그대로 받아 처리(검증된 경로 재사용)."""
+    df = pd.DataFrame({"품번": list(mapping.keys()),
+                       value_col: list(mapping.values())})
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as w:
+        df.to_excel(w, sheet_name="hub", index=False)
+    return buf.getvalue()
+
+
 def _make_현재로케_template() -> bytes:
     """품번-현재로케 2컬럼 빈 양식 xlsx 바이트 생성."""
     df = pd.DataFrame(columns=["품번", "현재로케"])
@@ -460,6 +473,19 @@ if up_master:
 
 # 현재로케만 일괄 업데이트 (재배치 이동 후 반영용)
 with st.expander("🔄 현재로케만 일괄 업데이트"):
+    _hub_loc = hub.loc_map()
+    if _hub_loc:
+        _, _lmeta = hub.load_loc()
+        st.markdown(f"🗂️ **공용 기준정보 허브** 고정로케이션 {len(_hub_loc):,}품목 "
+                    f"(갱신 {_lmeta.get('갱신','—')}) — 업로드 없이 바로 반영")
+        if st.button("🗂️ 공용 허브에서 현재로케 반영", width='stretch', key="btn_hub_loc"):
+            res = _apply_현재로케_update(_hub_to_xlsx(_hub_loc, "현재로케"))
+            if res.get("error"):
+                st.error(res["error"])
+            else:
+                st.success(f"허브 반영 {res['applied']:,}개, 미매칭 {len(res['unmatched']):,}개")
+                st.rerun()
+        st.divider()
     st.caption(
         "다음 두 가지 형식 모두 지원:\n"
         "- **ERP Item_*.xlsx 원본**: 고정로케이션 + Item code 있음 자동 추출\n"
@@ -482,6 +508,19 @@ with st.expander("🔄 현재로케만 일괄 업데이트"):
 
 # 하대 일괄 업데이트 (ERP Item 마스터에서 배면×배단 자동 계산)
 with st.expander("🔢 하대(박스/팔레트) 일괄 업데이트"):
+    _hub_hadae = hub.hadae_map()
+    if _hub_hadae:
+        _, _imeta = hub.load_item()
+        st.markdown(f"🗂️ **공용 기준정보 허브** 하대 {len(_hub_hadae):,}품목 "
+                    f"(갱신 {_imeta.get('갱신','—')}) — 업로드 없이 바로 반영")
+        if st.button("🗂️ 공용 허브에서 하대 반영", width='stretch', key="btn_hub_hadae"):
+            res = _apply_하대_update(_hub_to_xlsx(_hub_hadae, "하대"))
+            if res.get("error"):
+                st.error(res["error"])
+            else:
+                st.success(f"허브 반영 {res['applied']:,}개, 미매칭 {len(res['unmatched']):,}개")
+                st.rerun()
+        st.divider()
     st.caption(
         "다음 두 가지 형식 모두 지원:\n"
         "- **ERP Item 마스터 원본**: A=Item code, AD=배면, AE=배단 → 하대=AD×AE 자동 계산\n"
