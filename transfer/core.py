@@ -111,17 +111,17 @@ def _row(code, b, ip, plt, cur, mn, mx, req, evt, inc, av, alloc, movable,
     }
 
 
-# ---------- 창고 배정 (한 창고에서만, FEFO 우선, 부족시 경고) ----------
-# 소스 창고 우선순위(동점 유통기한 시): IC930 > IC920 > IC100
-WH_PRIORITY = {"IC930": 0, "IC920": 1, "IC100": 2}
-WH_SOURCES = ("IC930", "IC920", "IC100")
+# ---------- 창고 배정 (한 창고에서만, 창고 우선순위, 부족시 경고) ----------
+# 배정 우선순위: IC930 → IC100 → IC920 (930부터, 없으면 100, 그다음 920)
+WH_PRIORITY = {"IC930": 0, "IC100": 1, "IC920": 2}
+WH_SOURCES = ("IC930", "IC100", "IC920")
 
 
 def allocate_warehouse(rows, loc_inv, sources=WH_SOURCES):
     """이동_박스>0 각 품목에 출고 창고 1개 배정.
     loc_inv = {코드: {창고: {"avail": 출고가능박스, "exp": 최단소비기한(비교가능값)}}}
-    규칙: 단독으로 이동량 채울 수 있는 창고 중 유통기한 가장 빠른 것(동점 IC930우선).
-          없으면 배정=분할필요(경고).
+    규칙: 단독으로 이동량 채우는 창고 중 우선순위 IC930→IC100→IC920 로 선택(유통기한 무관).
+          예) 930이 채울 수 있으면 100/920에 더 빠른 재고 있어도 930. 없으면 배정=분할필요(경고).
     각 row에 컬럼 추가: 배정창고 / 배정재고(Box) / 최단유통기한 / 창고재고표기 / 창고경고
     """
     prio = {w: WH_PRIORITY.get(w, 9) for w in sources}
@@ -135,10 +135,10 @@ def allocate_warehouse(rows, loc_inv, sources=WH_SOURCES):
         # 소스 창고만
         cand = {w: whs[w] for w in sources if w in whs and (whs[w].get("avail") or 0) > 0}
         note = " ".join(f"{w}:{int(cand[w]['avail'])}" for w in sources if w in cand) or "재고없음"
-        # 단독 가능 창고
+        # 단독 가능 창고 → 창고 우선순위(IC930→IC100→IC920)로 선택. 유통기한 무관.
         solo = [w for w in cand if (cand[w].get("avail") or 0) >= mb]
         if solo:
-            solo.sort(key=lambda w: (cand[w].get("exp") or 99999999, prio.get(w, 9)))
+            solo.sort(key=lambda w: prio.get(w, 9))
             best = solo[0]
             r["배정창고"] = best
             r["배정재고(Box)"] = int(cand[best]["avail"])
