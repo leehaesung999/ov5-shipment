@@ -128,6 +128,61 @@ def add_reflected_events(header_ids) -> bool:
         return False
 
 
+# ---------- 품목코드 승계표 (입수변경 등으로 코드가 바뀐 경우) ----------
+RKEY = "ss_code_remap"
+REMAP_SEED = DATA / "code_remap_seed.json"
+
+
+def load_code_remap() -> list:
+    """번들 시드 ∪ Supabase 승계규칙(구코드→신코드). (old,new)로 중복제거,
+    Supabase 항목이 시드를 덮어쓴다(입수 수정 반영)."""
+    seed = []
+    if REMAP_SEED.exists():
+        try:
+            seed = json.loads(REMAP_SEED.read_text(encoding="utf-8"))
+        except Exception:
+            seed = []
+    extra = []
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", RKEY).execute()
+            if r.data and r.data[0].get("value"):
+                extra = r.data[0]["value"] or []
+        except Exception:
+            pass
+    merged = {}
+    for r in list(seed) + list(extra):
+        old = str(r.get("old", "")).strip()
+        new = str(r.get("new", "")).strip()
+        if old and new:
+            merged[(old, new)] = {"old": old, "new": new,
+                                  "ip": r.get("ip"), "plt": r.get("plt")}
+    return list(merged.values())
+
+
+def add_code_remap(old, new, ip=None, plt=None) -> bool:
+    """승계규칙 1건을 Supabase에 추가(동일 old→new 있으면 갱신)."""
+    cur = []
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", RKEY).execute()
+            if r.data and r.data[0].get("value"):
+                cur = r.data[0]["value"] or []
+        except Exception:
+            pass
+    cur = [c for c in cur if not (str(c.get("old")) == str(old)
+                                  and str(c.get("new")) == str(new))]
+    cur.append({"old": str(old), "new": str(new),
+                "ip": int(ip) if ip else None, "plt": int(plt) if plt else None})
+    if not use_supabase():
+        return False
+    try:
+        _sb().table("app_settings").upsert({"key": RKEY, "value": cur}).execute()
+        return True
+    except Exception:
+        return False
+
+
 def load_master() -> dict:
     if MASTER.exists():
         with open(MASTER, "r", encoding="utf-8") as f:

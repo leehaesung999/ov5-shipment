@@ -32,6 +32,10 @@ if "ss_history" not in st.session_state:
 history = st.session_state.ss_history
 master = store.load_master()
 
+# 품목코드 승계(입수변경 등으로 코드 변경) — 구코드 이력·마스터를 신코드로 이전
+remap = store.load_code_remap()
+remap_log = core.apply_code_remap(history, master, remap)
+
 meta = store.history_meta()
 c1, c2, c3 = st.columns(3)
 dmax = max((d for it in history.values() for d in it.keys()), default="—")
@@ -49,6 +53,30 @@ with st.expander("⚙️ 설정 (리드타임·발주주기·서비스레벨)", 
     z = {"99% (2.33)": 2.33, "98% (2.05)": 2.05, "95% (1.65)": 1.65, "99.5% (2.58)": 2.58}[zsel]
     st.caption(f"노출기간 = 리드타임+발주주기 = **{lead+cycle}일**")
 settings = {"lead_time": lead, "cycle": cycle, "z": z, "batch": batch}
+
+# ---------- 품목코드 승계 (입수변경 등으로 코드가 바뀐 경우) ----------
+with st.expander(f"🔀 품목코드 승계 (입수변경) — 적용 {len(remap)}건", expanded=False):
+    st.caption("입수량이 바뀌며 품목코드가 변경된 경우, **구코드의 판매이력(낱개 기준)**을 "
+               "신코드로 승계해 안전재고를 이어서 산출합니다. 낱개 상품이 동일할 때만 사용하세요.")
+    if remap_log:
+        st.dataframe(pd.DataFrame(remap_log), width="stretch", hide_index=True)
+    else:
+        st.info("등록된 승계 규칙이 없습니다.")
+    with st.form("remap_add", clear_on_submit=True):
+        rc = st.columns([1, 1, 1, 2])
+        r_old = rc[0].text_input("구코드")
+        r_new = rc[1].text_input("신코드")
+        r_ip = rc[2].number_input("신입수", 1, 9999, 24)
+        r_plt = rc[3].number_input("신하대박스수(선택,0=구코드유지)", 0, 9999, 0)
+        if st.form_submit_button("➕ 승계규칙 추가", type="secondary"):
+            if r_old.strip() and r_new.strip():
+                ok = store.add_code_remap(r_old.strip(), r_new.strip(), r_ip,
+                                          r_plt or None)
+                st.success("추가됨" + (" (Supabase)" if ok else " (로컬은 시드파일로만 반영)")
+                           + " — 재계산하면 반영됩니다.")
+                st.rerun()
+            else:
+                st.error("구코드·신코드를 입력하세요.")
 
 st.divider()
 

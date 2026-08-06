@@ -162,6 +162,47 @@ def extract_cj_month(rows, col):
     return out
 
 
+def apply_code_remap(history, master, remap):
+    """입수량 변경 등으로 품목코드가 바뀐 경우 구코드 이력·마스터를 신코드로 승계.
+
+    remap = [{"old": 구코드, "new": 신코드, "ip": 신입수(선택), "plt": 신하대박스수(선택)}]
+    전제: 낱개(EA) 상품은 동일하고 박스 입수만 바뀐 것 → EA 수요이력을 그대로 승계.
+      · 이력: 구코드 날짜별 [총,딜] 을 신코드로 이전(같은 날짜는 합산). 구코드는 제거.
+      · 마스터: 구코드 마스터(품목명·하대·카테고리)를 신코드로 복사 + 입수/하대 갱신.
+    매 재계산마다 호출(멱등): 이미 승계돼 구코드가 없으면 이력이전은 건너뛰고
+    마스터 입수갱신만 재적용된다. 반환: 적용 로그.
+    """
+    log = []
+    for r in (remap or []):
+        old = str(r.get("old", "")).strip()
+        new = str(r.get("new", "")).strip()
+        if not old or not new or old == new:
+            continue
+        # 1) 이력 승계 (구코드 → 신코드, 날짜별 합산)
+        oh = history.pop(old, None)
+        if oh:
+            nh = history.setdefault(new, {})
+            for d, v in oh.items():
+                tot, deal = (v[0] or 0), (v[1] or 0)
+                if d in nh:
+                    nh[d] = [nh[d][0] + tot, nh[d][1] + deal]
+                else:
+                    nh[d] = [tot, deal]
+        # 2) 마스터 승계 + 입수/하대 갱신 (구코드 없어도 매번 재적용)
+        base_m = master.get(new) or master.get(old) or {}
+        nm = dict(base_m)
+        if r.get("ip"):
+            nm["ip"] = int(r["ip"])
+        if r.get("plt"):
+            nm["plt"] = int(r["plt"])
+        if nm:
+            master[new] = nm
+        master.pop(old, None)
+        log.append({"구코드": old, "신코드": new, "신입수": nm.get("ip"),
+                    "이력승계": bool(oh), "승계일수": len(oh) if oh else 0})
+    return log
+
+
 def merge_history(history, chunk):
     """chunk를 history에 병합(같은 날짜는 덮어쓰기 = 재업로드 대비)."""
     for code, days in chunk.items():
