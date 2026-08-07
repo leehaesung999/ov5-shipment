@@ -44,3 +44,6 @@ abc_analysis/_tmp/
 
 # 외박스 요청 리스트 로컬 저장(공유는 Supabase)
 box_request/_*.json
+
+# 공용 기준정보 허브: 원본 Item xlsx 로컬 캐시(용량 큼 — 공유는 Supabase)
+master_hub/data/item_raw.xlsx

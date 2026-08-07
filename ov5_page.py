@@ -27,6 +27,7 @@ from core.master_loader import (
 )
 from core import store
 import cloud_master  # noqa: E402
+from master_hub import store as hub  # noqa: E402
 
 
 def migrate_fs_ms_to_lot() -> int:
@@ -326,10 +327,17 @@ with st.sidebar.expander("⚙️ 설정 / 기준정보 — 클릭해서 열기",
 
     st.divider()
     st.subheader("📚 기준정보 (유통기한월)")
-    cloud_master.restore_to("ov5", MASTER_CACHE)  # 클라우드 저장본 복원
+    # 공용 기준정보 허브의 원본 Item xlsx(소비기한(월) 포함) 우선 복원. 없으면 기존 ov5 저장본.
+    # 세션당 1회만 기록(매 rerun 재기록 시 유통기한 캐시 무효화 방지).
+    if "_ov5_master_src" not in st.session_state:
+        if hub.restore_item_to(str(MASTER_CACHE)):
+            st.session_state["_ov5_master_src"] = "공용 허브"
+        else:
+            cloud_master.restore_to("ov5", MASTER_CACHE)
+            st.session_state["_ov5_master_src"] = "ov5 저장본"
     if MASTER_CACHE.exists():
         n = len(cached_shelf_map(_master_mtime()))
-        st.success(f"등록 {n}품목")
+        st.success(f"등록 {n}품목 · 출처: {st.session_state['_ov5_master_src']}")
     else:
         st.warning("등록 안 됨 (24개월 기본값)")
     cloud_master.show_date("ov5", str(MASTER_CACHE) if MASTER_CACHE.exists() else None)

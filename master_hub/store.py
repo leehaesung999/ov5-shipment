@@ -35,8 +35,10 @@ DATA.mkdir(parents=True, exist_ok=True)
 
 ITEM_KEY, ITEM_META = "hub_item_b64", "hub_item_meta"
 LOC_KEY, LOC_META = "hub_loc_b64", "hub_loc_meta"
+ITEM_RAW_KEY = "hub_item_raw_b64"          # 원본 ERP Item xlsx 바이트 (coupang/ov5가 그대로 소비)
 ITEM_SEED = DATA / "item_seed.json.gz"
 LOC_SEED = DATA / "loc_seed.json.gz"
+ITEM_RAW_SEED = DATA / "item_raw.xlsx"     # 로컬 원본 캐시(용량 큼 → .gitignore)
 
 
 # ---------------- Supabase 하부 ----------------
@@ -186,7 +188,49 @@ def save_item(file_bytes: bytes) -> tuple[int, bool]:
     data = parse_item_master(file_bytes)
     ok = _save(ITEM_KEY, ITEM_META, ITEM_SEED, data,
                {"하대보유": sum(1 for v in data.values() if v.get("hadae"))})
+    # 원본 xlsx 바이트도 보관 (coupang/ov5가 파일 그대로 소비)
+    try:
+        ITEM_RAW_SEED.write_bytes(file_bytes)
+    except Exception:
+        pass
+    if use_supabase():
+        try:
+            _sb().table("app_settings").upsert(
+                {"key": ITEM_RAW_KEY, "value": base64.b64encode(file_bytes).decode()}).execute()
+        except Exception:
+            pass
     return len(data), ok
+
+
+def item_raw() -> bytes | None:
+    """공용 원본 ERP Item xlsx 바이트. Supabase 우선 → 로컬 시드."""
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", ITEM_RAW_KEY).execute()
+            if r.data and r.data[0].get("value"):
+                return base64.b64decode(r.data[0]["value"])
+        except Exception:
+            pass
+    if ITEM_RAW_SEED.exists():
+        try:
+            return ITEM_RAW_SEED.read_bytes()
+        except Exception:
+            return None
+    return None
+
+
+def restore_item_to(dest_path) -> bool:
+    """공용 원본 Item xlsx를 dest_path(파일)에 써넣음. 성공 여부 반환.
+    coupang/ov5의 기존 파일 기반 로직을 그대로 두고 소스만 허브로 바꾸는 용도."""
+    b = item_raw()
+    if not b:
+        return False
+    try:
+        Path(dest_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(dest_path).write_bytes(b)
+        return True
+    except Exception:
+        return False
 
 
 def save_loc(file_bytes: bytes) -> tuple[int, bool]:

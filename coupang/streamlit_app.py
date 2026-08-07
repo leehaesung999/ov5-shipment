@@ -25,6 +25,7 @@ sys.path.insert(0, str(HERE.parent))  # 레포 루트 (cloud_master)
 import 지정출고_자동매칭 as core  # noqa: E402
 import cloud_store  # noqa: E402
 import cloud_master  # noqa: E402
+from master_hub import store as hub  # noqa: E402
 
 TMP = HERE / "tmp_uploads"
 TMP.mkdir(exist_ok=True)
@@ -83,12 +84,21 @@ else:
 with st.sidebar.expander("⚙️ 마스터 / 대상품목 — 클릭해서 열기", expanded=False):
     # ----- 마스터 정보 (하대·팔레트) -----
     st.header("📚 마스터 정보")
-    cloud_master.restore_to("coupang", core.MASTER_ITEM_CACHE)  # 클라우드 저장본 복원
+    # 공용 기준정보 허브의 원본 Item xlsx를 우선 복원(한 번 올리면 공용). 없으면 기존 coupang 저장본.
+    # 세션당 1회만 파일 기록(매 rerun 재기록 시 매칭 캐시 무효화 방지).
+    if "_coupang_master_src" not in st.session_state:
+        if hub.restore_item_to(core.MASTER_ITEM_CACHE):
+            st.session_state["_coupang_master_src"] = "공용 허브"
+        else:
+            cloud_master.restore_to("coupang", core.MASTER_ITEM_CACHE)
+            st.session_state["_coupang_master_src"] = "coupang 저장본"
+    _hub_ok = st.session_state["_coupang_master_src"] == "공용 허브"
     n_master = cached_master_count(_master_mtime())
     if n_master:
-        st.success(f"하대 마스터: **{n_master}품목** 캐시됨")
+        _src = "공용 허브" if _hub_ok else "coupang 저장본"
+        st.success(f"하대 마스터: **{n_master}품목** 캐시됨 · 출처: {_src}")
     else:
-        st.warning("하대 마스터 미등록 (Item_*.xlsx 업로드)")
+        st.warning("하대 마스터 미등록 (공용 기준정보 관리에서 Item_*.xlsx 업로드)")
     cloud_master.show_date("coupang",
                            core.MASTER_ITEM_CACHE if os.path.isfile(core.MASTER_ITEM_CACHE) else None)
     up_master = st.file_uploader(
