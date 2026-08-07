@@ -41,6 +41,9 @@ except Exception:
     pass
 
 APP_DIR = Path(__file__).parent
+import sys  # noqa: E402
+sys.path.insert(0, str(APP_DIR.parent))      # 레포 루트 (공용 master_hub)
+from master_hub import store as hub  # noqa: E402
 DATA_DIR = APP_DIR / 'data'
 DATA_DIR.mkdir(exist_ok=True)
 CUST_FILE = DATA_DIR / 'customers.json'      # 거래처 잔존율 (고정 + 조정분 반영)
@@ -472,7 +475,18 @@ with st.sidebar:
 
     with st.expander('🔄 기준정보 갱신 (가끔)'):
         st.caption('Item 기준정보는 월 1회 정도만 갱신하면 됩니다.')
-        up_item = st.file_uploader('Item_*.xlsx 업로드', type=['xlsx'], key='up_item')
+        if st.button('🗂️ 공용 허브에서 갱신', key='janjon_hub', width='stretch'):
+            try:
+                _hb = hub.item_raw_session()
+                if not _hb:
+                    st.warning('공용 허브에 Item 기준정보가 없습니다.')
+                else:
+                    n, up = rebuild_items(_hb, '공용 허브')
+                    st.success(f'✅ 허브에서 갱신: {n:,}품목 ({up})')
+                    st.cache_data.clear()
+            except Exception as e:
+                st.error(f'실패: {e}')
+        up_item = st.file_uploader('Item_*.xlsx 업로드 (또는 위 허브 버튼)', type=['xlsx'], key='up_item')
         if up_item is not None:
             try:
                 n, up = rebuild_items(up_item.getvalue(), up_item.name)

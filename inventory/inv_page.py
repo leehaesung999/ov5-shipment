@@ -25,7 +25,9 @@ def _now_kst():
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
+sys.path.insert(0, str(HERE.parent))       # 레포 루트 (공용 master_hub)
 import inv_core as core  # noqa: E402  (OV5의 core 패키지와 이름 충돌 방지)
+from master_hub import store as hub  # noqa: E402
 
 DATA = HERE / "data"
 DEFAULT_MASTER = DATA / "기준정보.xlsx"
@@ -350,21 +352,38 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
                 st.info(f"기준정보 {_mn}품목 (이 세션에만 적용 — 로컬/비공유 모드)")
             _mmeta = _fetch_master_meta()
         else:
-            _mmeta = _fetch_master_meta()
-            if _mmeta:
-                _mb = _fetch_master_bytes(str(_mmeta.get("updated", "")))
-                if _mb:
-                    _p = TMP / "_master_sb.xlsx"
-                    _p.write_bytes(_mb)
-                    master_path = str(_p)
+            # 공용 기준정보 허브 우선(세션당 1회 파일 기록). 없으면 기존 inventory 저장본 → 기본본.
+            if "_inv_master_hub" not in st.session_state:
+                _hp = TMP / "_master_hub.xlsx"
+                if hub.restore_item_to(str(_hp)):
+                    _hi = hub.load_item()[1]
+                    st.session_state["_inv_master_hub"] = {
+                        "path": str(_hp),
+                        "meta": {"updated": _hi.get("갱신", "?"), "n": _hi.get("품목수", "?"),
+                                 "src": "공용 허브"}}
+                else:
+                    st.session_state["_inv_master_hub"] = None
+            _hubm = st.session_state["_inv_master_hub"]
+            if _hubm:
+                master_path = _hubm["path"]
+                _mmeta = _hubm["meta"]
+            else:
+                _mmeta = _fetch_master_meta()
+                if _mmeta:
+                    _mb = _fetch_master_bytes(str(_mmeta.get("updated", "")))
+                    if _mb:
+                        _p = TMP / "_master_sb.xlsx"
+                        _p.write_bytes(_mb)
+                        master_path = str(_p)
+                    else:
+                        master_path = str(DEFAULT_MASTER) if DEFAULT_MASTER.exists() else None
                 else:
                     master_path = str(DEFAULT_MASTER) if DEFAULT_MASTER.exists() else None
-            else:
-                master_path = str(DEFAULT_MASTER) if DEFAULT_MASTER.exists() else None
         # 마지막 업데이트 날짜 표시
         if _mmeta:
+            _srctxt = f" · 출처: {_mmeta['src']}" if _mmeta.get("src") else ""
             st.info(f"📅 기준정보 마지막 업데이트: **{_mmeta.get('updated', '?')}** "
-                    f"({_mmeta.get('n', '?')}품목)")
+                    f"({_mmeta.get('n', '?')}품목){_srctxt}")
         elif DEFAULT_MASTER.exists():
             _dm = datetime.fromtimestamp(DEFAULT_MASTER.stat().st_mtime)
             st.caption(f"기준정보: 내장 기본본 ({_dm:%Y-%m-%d} 기준) — 업로드하면 날짜가 갱신됩니다")

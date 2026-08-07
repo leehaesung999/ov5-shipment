@@ -88,6 +88,7 @@ st.caption(
 )
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from page_help import show_help  # noqa: E402
+from master_hub import store as hub  # noqa: E402
 show_help({
     "목적": "창고 배치도(레이아웃 xlsm)에 현재 로케이션별 품목을 자동 채우고 색·테두리 적용.",
     "필요한 파일": "① ERP Item_*.xlsx 원본 (필수)  ② 레이아웃 xlsm (선택, 미업로드 시 내장 기본 사용)",
@@ -99,11 +100,22 @@ show_help({
                        "· I/J/K 열은 C열(로케이션ID) 자동 복사",
 })
 
+use_hub_src = st.checkbox(
+    "🗂️ 공용 허브의 Item 사용 (업로드 없이)", value=False,
+    help="공용 기준정보 관리에 올린 ERP Item 원본을 그대로 사용합니다.")
 up_src = st.file_uploader(
     "① 원본 데이터 xlsx (예: `Item_20260723105335.xlsx`)",
-    type=["xlsx"],
+    type=["xlsx"], disabled=use_hub_src,
     help="ERP에서 받은 그대로 업로드하면 자동 필터 후 색칠까지 처리",
 )
+_hub_src_ok = False
+if use_hub_src:
+    _hb = hub.item_raw_session()
+    if _hb:
+        _hub_src_ok = True
+        st.caption(f"🗂️ 공용 허브 Item 사용 ({len(_hb)/1024:.0f}KB)")
+    else:
+        st.warning("공용 허브에 Item이 없습니다. 업로드하거나 공용 기준정보 관리에서 등록하세요.")
 
 with st.expander("옵션 — 레이아웃 파일 · 시트 · 디자인", expanded=False):
     up_layout = st.file_uploader(
@@ -128,17 +140,23 @@ else:
     layout_ready = True
 
 run_clicked = st.button("▶ 편집 + 색칠 실행", type="primary",
-                        disabled=not (up_src and layout_ready),
+                        disabled=not ((up_src or _hub_src_ok) and layout_ready),
                         width='stretch')
 
-if not up_src:
-    st.info("원본 xlsx 하나만 업로드하면 됩니다. 편집·색칠 자동 진행.")
+if not up_src and not use_hub_src:
+    st.info("원본 xlsx 하나만 업로드(또는 공용 허브 Item 사용)하면 됩니다. 편집·색칠 자동 진행.")
 
 if run_clicked:
     try:
         ts = _now_kst().strftime("%Y%m%d_%H%M")
-        src_path = TMP / f"_src_{up_src.name}"
-        src_path.write_bytes(up_src.getvalue())
+        if use_hub_src:
+            _src_bytes = hub.item_raw_session()
+            _src_name = "공용허브_Item.xlsx"
+        else:
+            _src_bytes = up_src.getvalue()
+            _src_name = up_src.name
+        src_path = TMP / f"_src_{_src_name}"
+        src_path.write_bytes(_src_bytes)
 
         # 1) 원본 → 편집본
         with st.spinner("원본 편집 중..."):

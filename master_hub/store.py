@@ -219,6 +219,16 @@ def item_raw() -> bytes | None:
     return None
 
 
+def item_raw_session() -> bytes | None:
+    """세션당 1회만 원본 Item 바이트를 가져와 재사용(매 rerun Supabase 재요청 방지)."""
+    if st is None:
+        return item_raw()
+    key = "_hub_item_raw_session"
+    if key not in st.session_state:
+        st.session_state[key] = item_raw()
+    return st.session_state[key]
+
+
 def restore_item_to(dest_path) -> bool:
     """공용 원본 Item xlsx를 dest_path(파일)에 써넣음. 성공 여부 반환.
     coupang/ov5의 기존 파일 기반 로직을 그대로 두고 소스만 허브로 바꾸는 용도."""
