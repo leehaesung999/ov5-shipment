@@ -415,13 +415,22 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str, scope: str = "미
     all_exps    = sorted(exp_info.keys())
     출고중_목록 = [e for e in all_exps if exp_info[e]["in_출고"]]
 
-    if target_exp not in all_exps:
-        return {"품목명": 품목명, "status": "미입고", "color": "gray",
-                "note": f"등록 유통기한({target_exp}) 재고가 이 창고에 없음", "출고중": 출고중_목록,
-                "입고": "❌ 미입고(유통기한 없음)", "락": "-", "락누락": False, **_EMPTY_QTY}
+    # 등록 유통기한이 정확히 있으면 그걸, 없으면 '등록일 이상(≥) 중 가장 빠른' 로트를 실질 리뉴얼로.
+    if target_exp in all_exps:
+        eff_exp, 대체 = target_exp, False
+    else:
+        later = [e for e in all_exps if e >= target_exp]
+        if not later:
+            # 등록일 이상 로트가 하나도 없음 → 리뉴얼 재고 아직 미입고
+            return {"품목명": 품목명, "status": "미입고", "color": "gray",
+                    "note": f"등록 유통기한({target_exp}) 이상 재고가 이 창고에 없음", "출고중": 출고중_목록,
+                    "입고": "❌ 미입고(유통기한 없음)", "락": "-", "락누락": False, **_EMPTY_QTY}
+        eff_exp, 대체 = min(later), True
 
-    t = exp_info[target_exp]
-    입고 = "✅ 입고" if t["qty"] > 0 else "✅ 입고(현재고 0)"
+    t = exp_info[eff_exp]
+    _pre = f"등록 {target_exp} 없음 → {eff_exp}로 판정 · " if 대체 else ""
+    입고 = (f"🔁 대체입고({eff_exp})" if 대체
+            else ("✅ 입고" if t["qty"] > 0 else "✅ 입고(현재고 0)"))
     has_free = t["has_lock_free"]           # 락 안 걸린(출고가능) 재고 존재 여부
     락누락 = False
     if scope == "전량":
@@ -434,27 +443,27 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str, scope: str = "미
     else:  # 미지정 — 구분 등록 안 됨
         락 = "🔒 전량 락" if not has_free else "🔓 락 일부해제"
 
-    idx         = all_exps.index(target_exp)
+    idx         = all_exps.index(eff_exp)
     before_exps = all_exps[:idx]
     after_exps  = all_exps[idx + 1:]
     직전        = before_exps[-1] if before_exps else None
     이후_출고   = [e for e in after_exps if exp_info[e]["in_출고"]]
 
-    # 지금 나갈 수 있는 재고: 빠른 유통기한 가용 + 동일 유통기한 락 안 걸린 가용
+    # 지금 나갈 수 있는 재고: 빠른 유통기한 가용 + 동일(실질) 유통기한 락 안 걸린 가용
     선입가용 = sum(exp_info[e]["avail"] for e in before_exps)
     동일미락 = t["avail"]
     합친수량 = 선입가용 + 동일미락
 
     if 이후_출고:
-        status, color, note = "위험", "red", f"이후 유통기한 출고진행 중: {', '.join(이후_출고)}"
+        status, color, note = "위험", "red", _pre + f"이후 유통기한 출고진행 중: {', '.join(이후_출고)}"
     elif t["in_출고"]:
-        status, color, note = "주의(락 점검)", "orange", f"동일 유통기한({target_exp}) 출고진행 중"
+        status, color, note = "주의(락 점검)", "orange", _pre + f"동일 유통기한({eff_exp}) 출고진행 중"
     elif not t["has_lock_free"] and 직전 and exp_info[직전]["in_출고"]:
         status, color, note = ("주의(락 점검)", "orange",
-                               f"직전 유통기한({직전}) 출고진행 중  /  락 없는 동일 유통기한 재고 없음")
+                               _pre + f"직전 유통기한({직전}) 출고진행 중  /  락 없는 동일 유통기한 재고 없음")
     else:
         status, color = "정상", ""
-        note = "락 없는 동일 유통기한 재고 있음" if t["has_lock_free"] else "출고진행 없음"
+        note = _pre + ("락 없는 동일 유통기한 재고 있음" if t["has_lock_free"] else "출고진행 없음")
 
     return {"품목명": 품목명, "status": status, "color": color, "note": note,
             "출고중": 출고중_목록, "입고": 입고, "락": 락, "락누락": 락누락,
@@ -646,7 +655,7 @@ if uploaded:
 
         # 전체 요약 (미입고는 IC930에서만 집계되므로 분모는 실제 표시 건수)
         _n_reg = len(result_df)
-        _n_in  = int((result_df["창고입고"].astype(str).str.startswith("✅")).sum())
+        _n_in  = int((~result_df["창고입고"].astype(str).str.startswith("❌")).sum())  # ✅ + 🔁 대체입고
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("📦 창고입고", f"{_n_in}/{_n_reg}",
                   help="등록(품목×창고) 중 해당 유통기한 재고가 입고된 건")
@@ -772,7 +781,8 @@ if uploaded:
 
 **추가 열**
 - **리뉴얼구분** : 등록 시 지정한 전량/부분 (미지정이면 재등록해 지정)
-- **창고입고** : 등록 (품목·유통기한) 재고가 이 창고에 입고됐는지 (✅ 입고 / ❌ 미입고)
+- **창고입고** : 등록 (품목·유통기한) 재고가 이 창고에 입고됐는지 (✅ 입고 / 🔁 대체입고 / ❌ 미입고)
+  - **🔁 대체입고** : 등록한 정확한 유통기한은 없고, 그 이상(≥) 중 가장 빠른 로트로 대체해 판정 (비고에 표시)
 - **리뉴얼(락)** : 리뉴얼구분에 비춘 락 상태
   - **전량** → 🔒 전량 락(정상) / 🔴 **락 누락 의심**(전량인데 미락 재고 있음)
   - **부분** → 🔓 부분(락 해제분 정상)
