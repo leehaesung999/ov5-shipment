@@ -17,6 +17,51 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from safety_stock import core, store  # noqa: E402
+from master_hub import store as hub  # noqa: E402
+
+
+def _apply_hub_master(master: dict, history: dict) -> dict:
+    """공용 기준정보 허브의 입수·하대(배면×배단)·품명을 safety_stock 마스터에 덮어씌움.
+
+    - 대상: 기존 마스터 코드 ∪ 히스토리 코드 (숫자 코드만).
+    - 하대/입수: 비어있으면 채우고, 값이 다르면 허브값으로 교정(허브=ERP 원본, 정답).
+    - 허브에 없는 코드(예: 8000xxx 특수코드)는 그대로 보존.
+    반환: 갱신 통계.
+    """
+    hip, hha, hnm = hub.ipsu_map(), hub.hadae_map(), hub.name_map()
+    if not hha and not hip:
+        return {}
+    codes = set(master) | {str(c) for c in history}
+    st_ = {"하대교정": 0, "하대신규": 0, "입수교정": 0, "입수신규": 0, "신규품목": 0}
+    for k in codes:
+        if not str(k).isdigit():
+            continue
+        ci = int(k)
+        h_plt, h_ip, h_nm = hha.get(ci), hip.get(ci), hnm.get(ci)
+        if h_plt is None and h_ip is None:
+            continue
+        m = master.get(k)
+        if m is None:
+            master[k] = {"ip": int(h_ip) if h_ip else None,
+                         "plt": int(h_plt) if h_plt else None,
+                         "cat": "", "nm": h_nm or ""}
+            st_["신규품목"] += 1
+            continue
+        if h_plt is not None:
+            cur = m.get("plt")
+            if cur in (None, 0, ""):
+                m["plt"] = int(h_plt); st_["하대신규"] += 1
+            elif int(cur) != int(h_plt):
+                m["plt"] = int(h_plt); st_["하대교정"] += 1
+        if h_ip is not None:
+            cur = m.get("ip")
+            if cur in (None, 0, ""):
+                m["ip"] = int(h_ip); st_["입수신규"] += 1
+            elif int(cur) != int(h_ip):
+                m["ip"] = int(h_ip); st_["입수교정"] += 1
+        if not m.get("nm") and h_nm:
+            m["nm"] = h_nm
+    return st_
 
 KST = timezone(timedelta(hours=9))
 
@@ -31,6 +76,15 @@ if "ss_history" not in st.session_state:
     st.session_state.ss_src = src
 history = st.session_state.ss_history
 master = store.load_master()
+
+# 공용 기준정보 허브의 입수·하대 자동 적용 (기본 ON) — 한 번 올리면 이 페이지도 최신 반영
+use_hub = st.checkbox("🗂️ 공용 기준정보 허브의 입수·하대 자동 적용 (권장)", value=True,
+                      help="공용 기준정보 관리에서 올린 ERP Item 마스터의 입수·하대(배면×배단)를 "
+                           "이 계산에 반영합니다. 끄면 내장 마스터값을 사용합니다.")
+if use_hub:
+    _hstat = _apply_hub_master(master, history)
+    if _hstat and sum(_hstat.values()):
+        st.caption("🗂️ 허브 반영 — " + " · ".join(f"{k} {v}건" for k, v in _hstat.items() if v))
 
 # 품목코드 승계(입수변경 등으로 코드 변경) — 구코드 이력·마스터를 신코드로 이전
 remap = store.load_code_remap()
