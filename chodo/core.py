@@ -166,12 +166,16 @@ def build_pallets(
     tier3_max: int = 2, tier3_ratio: float = 0.8,
     pallet_cap: float = 1.2,
     group_mode: str = "location",
+    big_pairing: bool = True,
 ) -> tuple[list[Pallet], list[str]]:
     """요청 목록 → 파레트 리스트 + 경고.
 
     group_mode: 소형/중형 묶음 기준.
       'location' — 창고 로케이션(피킹 동선) 순으로 인접 품목끼리 (기본)
       'quantity' — 적재율 순 최소 파레트(FFD)
+    big_pairing: 대형(25박스+) 잔바리 처리.
+      True  — 적재율합 ≤ tier3_ratio 로 최대 tier3_max 품목 페어링 (기본)
+      False — 페어링 없이 1품목=1파레트 (25박스 이상은 무조건 별도 파레트)
     """
     warnings: list[str] = []
     full_pallets: list[Pallet] = []
@@ -212,8 +216,14 @@ def build_pallets(
     pack = _pack_by_location if group_mode == "location" else _pack_ffd
     small = pack(t1, max_count=tier1_max, cap=pallet_cap, kind="small")
     mid = pack(t2, max_count=tier2_max, cap=pallet_cap, kind="mid")
-    # 대형: 적재율 합 ≤ tier3_ratio(0.8), 최대 tier3_max(2). 페어링 목적이라 항상 적재율 기준(FFD).
-    big = _pack_ffd(t3, max_count=tier3_max, cap=tier3_ratio, kind="big")
+    # 대형: 페어링 켜짐이면 적재율합 ≤ tier3_ratio(0.8)·최대 tier3_max(2) FFD,
+    #       꺼짐이면 1품목=1파레트(각자 별도). group_mode=location이면 로케이션 순 유지.
+    if big_pairing:
+        big = _pack_ffd(t3, max_count=tier3_max, cap=tier3_ratio, kind="big")
+    else:
+        t3_sorted = sorted(t3, key=_loc_key) if group_mode == "location" \
+            else sorted(t3, key=lambda x: -x.적재율)
+        big = [Pallet(kind="big", items=[pi]) for pi in t3_sorted]
 
     if group_mode == "location":
         full_pallets.sort(key=lambda p: _loc_key(p.items[0]))

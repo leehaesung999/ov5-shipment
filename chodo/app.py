@@ -126,8 +126,12 @@ with st.expander("⚙️ 옵션 (센터/규칙 조정)", expanded=False):
     t1max = o1.number_input("소형 최대품목", 1, 99, 10)
     t2box = o2.number_input("중형 기준(≤박스)", 1, 99, 24)
     t2max = o2.number_input("중형 최대품목", 1, 99, 3)
-    t3max = o2.number_input("대형 최대품목", 1, 99, 2)
-    t3ratio = o3.number_input("대형 적재율합 한도", 0.1, 1.0, 0.8, step=0.05)
+    big_pairing = o2.checkbox("대형(25박스+) 페어링 적용", value=True,
+                              help="켬: 적재율합 한도 내 최대 2품목 묶음. "
+                                   "끔: 25박스 이상은 무조건 1품목=1파레트(별도).")
+    t3max = o3.number_input("대형 최대품목", 1, 99, 2, disabled=not big_pairing)
+    t3ratio = o3.number_input("대형 적재율합 한도", 0.1, 1.0, 0.8, step=0.05,
+                              disabled=not big_pairing)
     pcap = o3.number_input("개수묶음 적재율합 한도", 0.5, 2.0, 1.2, step=0.1)
     gmode_label = o3.selectbox("소형·중형 묶는 기준", ["창고 로케이션 순", "수량(적재율) 순"])
 gmode = "location" if gmode_label.startswith("창고") else "quantity"
@@ -147,7 +151,7 @@ if st.button("🚛 배차 산출", type="primary", disabled=(up_order is None or
             tier1_box=int(t1box), tier1_max=int(t1max),
             tier2_box=int(t2box), tier2_max=int(t2max),
             tier3_max=int(t3max), tier3_ratio=float(t3ratio),
-            pallet_cap=float(pcap), group_mode=gmode,
+            pallet_cap=float(pcap), group_mode=gmode, big_pairing=big_pairing,
         )
         summ = C.summarize(order, pallets, trucks, int(cap), gmeta)
         st.session_state["chodo_res"] = {
