@@ -5,7 +5,7 @@
 """
 
 import sys
-from datetime import datetime
+from datetime import datetime, date, timedelta
 # --- KST (Streamlit Cloud는 UTC 기본) ---
 try:
     KST  # noqa: F821
@@ -56,6 +56,65 @@ def parse_ymd(v):
         return datetime.strptime(s, "%Y%m%d")
     except ValueError:
         return None
+
+
+# ============================================================
+# 영업일/공휴일 — 하프도달 점검은 '입고예정일(=다음 영업일)' 기준으로 판정
+# ============================================================
+try:
+    import holidays as _holidays_lib   # 있으면 정확한 한국 공휴일(음력·대체공휴일 자동)
+except Exception:
+    _holidays_lib = None
+
+# 라이브러리 설치 여부(화면 안내용). 없으면 주말만 건너뜀.
+HOLIDAYS_ENABLED = _holidays_lib is not None
+_HOLIDAY_CACHE = {}
+
+
+def _kr_holidays(year):
+    """해당 연도의 한국 공휴일 date 집합. 라이브러리 없으면 빈 집합(주말만 반영)."""
+    if _holidays_lib is None:
+        return set()
+    if year not in _HOLIDAY_CACHE:
+        try:
+            _HOLIDAY_CACHE[year] = set(_holidays_lib.SouthKorea(years=year).keys())
+        except Exception:
+            _HOLIDAY_CACHE[year] = set()
+    return _HOLIDAY_CACHE[year]
+
+
+def _as_date(d):
+    return d.date() if isinstance(d, datetime) else d
+
+
+def is_business_day(d):
+    """주말(토·일)·한국 공휴일이 아니면 영업일. (공휴일 라이브러리 없으면 주말만 판정)"""
+    d = _as_date(d)
+    if d.weekday() >= 5:              # 5=토, 6=일
+        return False
+    return d not in _kr_holidays(d.year)
+
+
+def next_business_day(d, n=1):
+    """d로부터 n 영업일 뒤 날짜(주말+공휴일 건너뜀). date 반환.
+    예) 금요일 +1 → 월요일. 월요일이 공휴일이면 그 다음 영업일."""
+    cur = _as_date(d)
+    steps = 0
+    while steps < n:
+        cur = cur + timedelta(days=1)
+        if is_business_day(cur):
+            steps += 1
+    return cur
+
+
+def half_reached_date(mfg, exp):
+    """하프도달일 = 잔존율이 50%가 되는 날 = 제조일과 유통기한의 정중앙."""
+    if mfg is None or exp is None:
+        return None
+    total = (exp - mfg).days
+    if total <= 0:
+        return None
+    return mfg + timedelta(days=total // 2)
 
 
 def load_master(path):
@@ -1158,6 +1217,10 @@ def _write_공유_sheet(out_rows, output_path):
     k_header = ws.cell(row=1, column=11, value="잔존율 40% 도달일")
     _copy_cell_style(k_header, ws.cell(row=1, column=10))
     ws.column_dimensions["K"].width = 16
+    # L열 헤더 추가 — 하프도달일(잔존율 50% 되는 날)
+    l_header = ws.cell(row=1, column=12, value="하프도달일(잔존50%)")
+    _copy_cell_style(l_header, ws.cell(row=1, column=10))
+    ws.column_dimensions["L"].width = 16
 
     keys = ["품목코드", "품목명", "유통기한_원본", "수량", "유통기한",
             "공유여부", "처리방안", "잔존일수", "잔존개월", "잔존율"]
@@ -1188,8 +1251,19 @@ def _write_공유_sheet(out_rows, output_path):
         k_cell.alignment = Alignment(horizontal="center", vertical="center")
         k_cell.number_format = "yyyy-mm-dd"
 
+        # L열: 하프도달일(잔존율 50% 되는 날)
+        l_val = row.get("하프도달일")
+        l_cell = ws.cell(row=r_idx, column=12, value=l_val)
+        l_cell.font = Font(name="맑은 고딕", size=10)
+        l_cell.border = Border(
+            left=Side(style="thin"), right=Side(style="thin"),
+            top=Side(style="thin"), bottom=Side(style="thin"),
+        )
+        l_cell.alignment = Alignment(horizontal="center", vertical="center")
+        l_cell.number_format = "yyyy-mm-dd"
+
     last_row = max(1, 1 + len(out_rows))
-    ws.print_area = f"A1:K{last_row}"
+    ws.print_area = f"A1:L{last_row}"
     ws.freeze_panes = "A2"
     wb.save(output_path)
 
@@ -1229,6 +1303,7 @@ def _build_expiry_row(r, today, threshold):
         "잔존개월": round(remain_days / 30, 2),
         "잔존율": round(잔존율, 4),
         "잔존율40_도달일": date_40,
+        "하프도달일": half_reached_date(mfg, exp),
     }, "ok"
 
 
@@ -1423,6 +1498,7 @@ def analyze_nonlock_expiry(stock_path, master_path, output_path,
                 "잔존개월": round(remain_days / 30, 2),
                 "잔존율": round(잔존율, 4),
                 "잔존율40_도달일": date_40,
+                "하프도달일": half_reached_date(mfg, exp),
             }
         qty_box_sum[key] += ab
         qty_ea_sum[key] += ae
