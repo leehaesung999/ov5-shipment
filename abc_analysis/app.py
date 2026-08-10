@@ -485,26 +485,8 @@ with st.expander("🔄 현재로케만 일괄 업데이트"):
             else:
                 st.success(f"허브 반영 {res['applied']:,}개, 미매칭 {len(res['unmatched']):,}개")
                 st.rerun()
-        st.divider()
-    st.caption(
-        "다음 두 가지 형식 모두 지원:\n"
-        "- **ERP Item_*.xlsx 원본**: 고정로케이션 + Item code 있음 자동 추출\n"
-        "- **표준 양식**: 품번·현재로케 2컬럼 (아래 양식 다운로드)"
-    )
-    st.download_button("📥 표준 양식 다운로드 (선택)", data=_make_현재로케_template(),
-                       file_name="현재로케_업데이트_양식.xlsx", mime=MIME_XLSX,
-                       width='stretch', key="dl_loc_tmpl")
-    up_loc = st.file_uploader("xlsx 업로드 (ERP 원본 또는 표준 양식)",
-                              type=["xlsx"], key="upl_loc_update")
-    if up_loc and st.button("✓ 현재로케 갱신 적용", type="primary", width='stretch', key="btn_loc_apply"):
-        res = _apply_현재로케_update(up_loc.getvalue())
-        if res.get("error"):
-            st.error(res["error"])
-        else:
-            st.success(f"적용 {res['applied']:,}개, 미매칭 {len(res['unmatched']):,}개")
-            if res["unmatched"]:
-                st.caption("미매칭 품번 (앞 20개): " + ", ".join(res["unmatched"][:20]))
-            st.rerun()
+    else:
+        st.info("공용 기준정보 관리에서 편집본(고정로케이션)을 먼저 등록하세요.")
 
 # 하대 일괄 업데이트 (ERP Item 마스터에서 배면×배단 자동 계산)
 with st.expander("🔢 하대(박스/팔레트) 일괄 업데이트"):
@@ -520,26 +502,8 @@ with st.expander("🔢 하대(박스/팔레트) 일괄 업데이트"):
             else:
                 st.success(f"허브 반영 {res['applied']:,}개, 미매칭 {len(res['unmatched']):,}개")
                 st.rerun()
-        st.divider()
-    st.caption(
-        "다음 두 가지 형식 모두 지원:\n"
-        "- **ERP Item 마스터 원본**: A=Item code, AD=배면, AE=배단 → 하대=AD×AE 자동 계산\n"
-        "- **표준 양식**: 품번·하대 2컬럼"
-    )
-    st.download_button("📥 표준 양식 다운로드 (선택)", data=_make_하대_template(),
-                       file_name="하대_업데이트_양식.xlsx", mime=MIME_XLSX,
-                       width='stretch', key="dl_hadae_tmpl")
-    up_hadae = st.file_uploader("xlsx 업로드 (ERP Item 마스터 또는 표준 양식)",
-                                type=["xlsx"], key="upl_hadae_update")
-    if up_hadae and st.button("✓ 하대 갱신 적용", type="primary", width='stretch', key="btn_hadae_apply"):
-        res = _apply_하대_update(up_hadae.getvalue())
-        if res.get("error"):
-            st.error(res["error"])
-        else:
-            st.success(f"적용 {res['applied']:,}개, 미매칭 {len(res['unmatched']):,}개")
-            if res["unmatched"]:
-                st.caption("미매칭 품번 (앞 20개): " + ", ".join(res["unmatched"][:20]))
-            st.rerun()
+    else:
+        st.info("공용 기준정보 관리에서 ERP Item 마스터를 먼저 등록하세요.")
 
 st.divider()
 

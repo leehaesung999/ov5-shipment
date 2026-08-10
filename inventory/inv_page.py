@@ -117,6 +117,7 @@ def _show_nonlock_checks(rows):
         "잔존일수": r.get("잔존일수"),
         "잔존개월": r.get("잔존개월"),
         "잔존율(%)": round((r.get("잔존율") or 0) * 100, 1),
+        "하프도달일": r.get("하프도달일"),
         "잔존율40도달일": r.get("잔존율40_도달일"),
         "공유여부": r.get("공유여부"),
     } for r, k in zip(view, vkeys)])
@@ -337,48 +338,35 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
 
     # ---------- 사이드바: 기준정보 (접기) ----------
     with st.sidebar.expander("⚙️ 기준정보 / 옵션 — 클릭해서 열기", expanded=False):
-        up_master = st.file_uploader("기준정보 xlsx 업로드(갱신)", type=["xlsx"], key="inv_master")
+        st.caption("기준정보(배면·하대·품명)는 **공용 기준정보 관리**에서 한 번 올리면 자동 반영됩니다.")
         _mmeta = None
-        if up_master:
-            master_path = _save(up_master, "_master.xlsx")
-            try:
-                _mn = len(core.load_master(master_path))
-            except Exception:
-                _mn = 0
-            if _store_master(up_master.getvalue(), _mn):
-                st.success(f"기준정보 {_mn}품목 업데이트 저장됨 (모두에게 공유·영구)")
-                _fetch_master_bytes.clear()  # 캐시 무효화
+        # 공용 기준정보 허브 우선(세션당 1회 파일 기록). 없으면 기존 inventory 저장본 → 기본본.
+        if "_inv_master_hub" not in st.session_state:
+            _hp = TMP / "_master_hub.xlsx"
+            if hub.restore_item_to(str(_hp)):
+                _hi = hub.load_item()[1]
+                st.session_state["_inv_master_hub"] = {
+                    "path": str(_hp),
+                    "meta": {"updated": _hi.get("갱신", "?"), "n": _hi.get("품목수", "?"),
+                             "src": "공용 허브"}}
             else:
-                st.info(f"기준정보 {_mn}품목 (이 세션에만 적용 — 로컬/비공유 모드)")
-            _mmeta = _fetch_master_meta()
+                st.session_state["_inv_master_hub"] = None
+        _hubm = st.session_state["_inv_master_hub"]
+        if _hubm:
+            master_path = _hubm["path"]
+            _mmeta = _hubm["meta"]
         else:
-            # 공용 기준정보 허브 우선(세션당 1회 파일 기록). 없으면 기존 inventory 저장본 → 기본본.
-            if "_inv_master_hub" not in st.session_state:
-                _hp = TMP / "_master_hub.xlsx"
-                if hub.restore_item_to(str(_hp)):
-                    _hi = hub.load_item()[1]
-                    st.session_state["_inv_master_hub"] = {
-                        "path": str(_hp),
-                        "meta": {"updated": _hi.get("갱신", "?"), "n": _hi.get("품목수", "?"),
-                                 "src": "공용 허브"}}
-                else:
-                    st.session_state["_inv_master_hub"] = None
-            _hubm = st.session_state["_inv_master_hub"]
-            if _hubm:
-                master_path = _hubm["path"]
-                _mmeta = _hubm["meta"]
-            else:
-                _mmeta = _fetch_master_meta()
-                if _mmeta:
-                    _mb = _fetch_master_bytes(str(_mmeta.get("updated", "")))
-                    if _mb:
-                        _p = TMP / "_master_sb.xlsx"
-                        _p.write_bytes(_mb)
-                        master_path = str(_p)
-                    else:
-                        master_path = str(DEFAULT_MASTER) if DEFAULT_MASTER.exists() else None
+            _mmeta = _fetch_master_meta()
+            if _mmeta:
+                _mb = _fetch_master_bytes(str(_mmeta.get("updated", "")))
+                if _mb:
+                    _p = TMP / "_master_sb.xlsx"
+                    _p.write_bytes(_mb)
+                    master_path = str(_p)
                 else:
                     master_path = str(DEFAULT_MASTER) if DEFAULT_MASTER.exists() else None
+            else:
+                master_path = str(DEFAULT_MASTER) if DEFAULT_MASTER.exists() else None
         # 마지막 업데이트 날짜 표시
         if _mmeta:
             _srctxt = f" · 출처: {_mmeta['src']}" if _mmeta.get("src") else ""
@@ -435,7 +423,23 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
             st.warning("지정로케이션 없음 — 업로드 필요")
         st.divider()
         threshold = st.slider("유통기한 분석 잔존율 기준", 0.0, 1.0, 0.5, 0.05)
-        today = st.date_input("기준일자", value=date.today())
+        # 하프도달 점검(OV5/OV6/비Lock)은 '오늘'이 아니라 실제 입고일(=다음 영업일) 기준으로 판정.
+        # 오늘 점검한 재고는 익일(금요일이면 월요일) 입고되므로, 그날 시점의 잔존율로 봐야 한다.
+        if any(k in action_keys for k in ("ov5", "ov6", "nonlock")):
+            run_date = st.date_input("실행일(오늘)", value=date.today(),
+                                     help="이 날짜에 점검을 돌린다고 가정합니다.")
+            if st.checkbox("입고예정일 직접 지정", value=False,
+                           help="자동(다음 영업일)이 아닌 날짜로 점검하려면 체크"):
+                today = st.date_input("입고예정일(점검 기준)",
+                                      value=core.next_business_day(run_date))
+            else:
+                today = core.next_business_day(run_date)
+            _wd = "월화수목금토일"[today.weekday()]
+            _hol = "주말+공휴일" if core.HOLIDAYS_ENABLED else "주말만(공휴일 미반영)"
+            st.caption(f"📦 점검 기준 = **입고예정일 {today:%Y-%m-%d}({_wd})** — "
+                       f"실행일 {run_date:%Y-%m-%d}의 다음 영업일 · {_hol}")
+        else:
+            today = st.date_input("기준일자", value=date.today())
 
     # ---------- 입력 ----------
     st.subheader("① ERP 재고조회 파일 업로드")

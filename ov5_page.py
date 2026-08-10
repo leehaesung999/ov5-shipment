@@ -341,46 +341,7 @@ with st.sidebar.expander("⚙️ 설정 / 기준정보 — 클릭해서 열기",
     else:
         st.warning("등록 안 됨 (24개월 기본값)")
     cloud_master.show_date("ov5", str(MASTER_CACHE) if MASTER_CACHE.exists() else None)
-    up = st.file_uploader("기준정보 xlsx 업로드", type=["xlsx"], key="master_up",
-                            help="새 양식: 소비기한(월) 컬럼, AF=상세 / 하대 없음 — "
-                                 "업로드 시 자동으로 컬럼 정규화 + 하대=배면×배단 생성")
-    if up:
-        raw_path = TMP_DIR / up.name
-        save_uploaded(up, raw_path)
-        try:
-            xl = pd.ExcelFile(raw_path)
-            # 'Item code' + (유통기한|소비기한)(월) 둘 다 있는 시트 자동 탐색
-            df = pd.DataFrame()
-            for sh in xl.sheet_names:
-                tmp = pd.read_excel(raw_path, sheet_name=sh)
-                if "Item code" in tmp.columns and (
-                        "유통기한(월)" in tmp.columns or "소비기한(월)" in tmp.columns):
-                    df = tmp
-                    break
-            if df.empty:
-                st.error("기준정보 시트를 못 찾았습니다 — Item code · 유통기한(월) 또는 "
-                          "소비기한(월) 컬럼이 필요합니다.")
-            else:
-                # 컬럼명 정규화: 소비기한(월) → 유통기한(월)
-                if ("소비기한(월)" in df.columns
-                        and "유통기한(월)" not in df.columns):
-                    df = df.rename(columns={"소비기한(월)": "유통기한(월)"})
-                # 하대 자동 생성: 배면 × 배단
-                ng_msg = ""
-                if "하대" not in df.columns:
-                    if "배면" in df.columns and "배단" in df.columns:
-                        df["하대"] = (pd.to_numeric(df["배면"], errors="coerce") *
-                                       pd.to_numeric(df["배단"], errors="coerce"))
-                        ng_msg = f" · 하대 자동생성 {int(df['하대'].notna().sum())}건"
-                    else:
-                        ng_msg = " · (배면/배단 없어 하대 미생성)"
-                CONFIG_DIR.mkdir(exist_ok=True)
-                df.to_excel(str(MASTER_CACHE), index=False, sheet_name="기준정보")
-                cloud_master.store("ov5", MASTER_CACHE.read_bytes(), len(df))
-                st.success(f"✅ 기준정보 {len(df)}품목 등록 완료{ng_msg}. "
-                            "새로고침하세요.")
-        except Exception as e:
-            st.error(f"업로드 처리 오류: {e}")
+    st.caption("기준정보(유통기한월)는 **공용 기준정보 관리**에서 한 번 올리면 자동 반영됩니다.")
 
     st.divider()
     st.subheader("📌 로트 지정 거래처 (FS/MS 통합)")

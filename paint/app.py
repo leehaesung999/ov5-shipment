@@ -101,8 +101,9 @@ show_help({
 })
 
 use_hub_src = st.checkbox(
-    "🗂️ 공용 허브의 Item 사용 (업로드 없이)", value=False,
-    help="공용 기준정보 관리에 올린 ERP Item 원본을 그대로 사용합니다.")
+    "🗂️ 공용 허브의 Item 사용 (업로드 없이)", value=True,
+    help="공용 기준정보 관리에 올린 ERP Item 원본을 그대로 사용합니다. "
+         "특정 파일을 쓰려면 체크를 끄고 아래에서 업로드하세요.")
 up_src = st.file_uploader(
     "① 원본 데이터 xlsx (예: `Item_20260723105335.xlsx`)",
     type=["xlsx"], disabled=use_hub_src,

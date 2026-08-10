@@ -486,14 +486,7 @@ with st.sidebar:
                     st.cache_data.clear()
             except Exception as e:
                 st.error(f'실패: {e}')
-        up_item = st.file_uploader('Item_*.xlsx 업로드 (또는 위 허브 버튼)', type=['xlsx'], key='up_item')
-        if up_item is not None:
-            try:
-                n, up = rebuild_items(up_item.getvalue(), up_item.name)
-                st.success(f'✅ 품목 기준정보 갱신: {n:,}품목 ({up})')
-                st.cache_data.clear()
-            except Exception as e:
-                st.error(f'실패: {e}')
+        st.caption('품목 기준정보(품명·소비기한월)는 공용 기준정보 관리에서 올린 걸 위 버튼으로 반영합니다.')
         st.divider()
         st.caption('통합 마스터는 고정입니다. 원본이 바뀐 경우에만 올리세요.')
         up_cust = st.file_uploader('통합 마스터.xlsx 업로드', type=['xlsx'], key='up_cust')

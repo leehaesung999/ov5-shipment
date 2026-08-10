@@ -101,20 +101,7 @@ with st.sidebar.expander("⚙️ 마스터 / 대상품목 — 클릭해서 열�
         st.warning("하대 마스터 미등록 (공용 기준정보 관리에서 Item_*.xlsx 업로드)")
     cloud_master.show_date("coupang",
                            core.MASTER_ITEM_CACHE if os.path.isfile(core.MASTER_ITEM_CACHE) else None)
-    up_master = st.file_uploader(
-        "Item_*.xlsx 업로드로 갱신",
-        type=["xlsx"], key="master_up",
-        help="배면×배단 = 하대 자동 계산 후 저장.")
-    if up_master:
-        tmp = TMP / up_master.name
-        tmp.write_bytes(up_master.getvalue())
-        ok, n = core.update_master_cache(str(tmp))
-        if ok:
-            with open(core.MASTER_ITEM_CACHE, "rb") as _f:
-                cloud_master.store("coupang", _f.read(), n)
-            st.success(f"마스터 갱신 완료: {n}품목 — 새로고침하세요")
-        else:
-            st.error("갱신 실패")
+    st.caption("하대 마스터는 **공용 기준정보 관리**에서 한 번 올리면 자동 반영됩니다.")
 
     st.divider()
     # ----- 기능2 대상 품목 -----

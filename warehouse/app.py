@@ -78,33 +78,21 @@ with st.sidebar.expander("⚙️ 설정 / 물품정보 — 클릭해서 열기",
     min_wh = st.number_input("최소 비교 창고 수", 1, len(warehouses),
                              value=min(cc.DEFAULT_MIN_WAREHOUSES, len(warehouses)))
     st.divider()
-    st.caption("물품정보(소비기한월) — 잔존% 계산용. 미업로드 시 기본 마스터 사용.")
-    up_master = st.file_uploader("물품정보 xlsx 업로드 (Item_*.xlsx)", type=["xlsx"], key="wh_master")
-    _mbytes = None
-    if up_master:
-        _mbytes = up_master.getvalue(); _src = "업로드"
+    st.caption("물품정보(소비기한월)는 **공용 기준정보 관리**에서 한 번 올리면 자동 반영됩니다.")
+    # 공용 기준정보 허브 우선. 없으면 기존 warehouse 저장본 → 내장 기본본.
+    _mbytes = hub.item_raw_session()
+    if _mbytes is not None:
+        _src = "공용 허브"
     else:
-        _mbytes = hub.item_raw_session()          # 공용 기준정보 허브 우선
-        if _mbytes is not None:
-            _src = "공용 허브"
-        else:
-            _src = "warehouse 저장본"
-            _wmeta = cloud_master.fetch_meta("warehouse")
-            if _wmeta:
-                _mbytes = cloud_master._fetch_bytes("warehouse", str(_wmeta.get("updated", "")))
+        _src = "warehouse 저장본"
+        _wmeta = cloud_master.fetch_meta("warehouse")
+        if _wmeta:
+            _mbytes = cloud_master._fetch_bytes("warehouse", str(_wmeta.get("updated", "")))
     master = _master(_mbytes)
-    if up_master and master:
-        cloud_master.store("warehouse", _mbytes, len(master))
     if master:
         st.success(f"물품정보: {len(master)}품목 · 출처: {_src}")
     else:
         st.warning("물품정보 없음 (잔존% 생략)")
-    cloud_master.show_date("warehouse", str(DEFAULT_MASTER))
-    # 양식 다운로드
-    tmpl = pd.DataFrame({"Item code": [1010422, 2032260], "소비기한(월)": [24, 12]})
-    buf = io.BytesIO(); tmpl.to_excel(buf, index=False)
-    st.download_button("📥 물품정보 양식", buf.getvalue(), "물품정보_양식.xlsx",
-                       width='stretch')
 
 st.info("판정 기준 · IC930(통합)이 타 창고보다 빠르면 **정상** · 타 창고가 더 빠른데 "
         "지정출고 내역 있으면 **정상(지정출고)** · 없으면 **비정상(점검)**", icon="📐")
