@@ -35,6 +35,7 @@ DATA.mkdir(parents=True, exist_ok=True)
 
 ITEM_KEY, ITEM_META = "hub_item_b64", "hub_item_meta"
 LOC_KEY, LOC_META = "hub_loc_b64", "hub_loc_meta"
+FLAG_KEY = "hub_itemflag"                  # {코드: {nm,담당자,등록일,flag}} — 조회용(jsonb, 시드없음: 담당자=개인정보)
 ITEM_RAW_KEY = "hub_item_raw_b64"          # 원본 ERP Item xlsx 바이트 (coupang/ov5가 그대로 소비)
 ITEM_SEED = DATA / "item_seed.json.gz"
 LOC_SEED = DATA / "loc_seed.json.gz"
@@ -274,6 +275,165 @@ def load_damdangja() -> dict:
         return {}
     try:
         r = _sb().table("app_settings").select("value").eq("key", DAMDANGJA_KEY).execute()
+        return (r.data[0].get("value") or {}) if r.data else {}
+    except Exception:
+        return {}
+
+
+# ---------------- 모니터링 재고표(.xlsb) 한 번에 업데이트 ----------------
+# 'Item기준정보' 시트 한 장에 코드·품명·입수·하대·소비기한월·담당자·품목등록일·Flag가 모두 있음.
+# 이 파일 하나로 Item마스터 + 담당자 + 등록일/Flag 를 동시에 갱신한다.
+def _mon_serial_to_date(x):
+    try:
+        from datetime import datetime, timedelta
+        return (datetime(1899, 12, 30) + timedelta(days=float(x))).strftime("%Y-%m-%d")
+    except (TypeError, ValueError):
+        return None
+
+
+def parse_monitoring(file_bytes: bytes) -> tuple[dict, dict, dict]:
+    """모니터링 재고표(.xlsb) 'Item기준정보' 시트 → (item, damdangja, flags).
+
+    item     = {코드: {nm, ip, hadae, shelf, bm:None, bd:None}}
+    damdangja= {코드: 담당자}
+    flags    = {코드: {nm, 담당자, 등록일(YYYY-MM-DD), flag}}
+    """
+    import pandas as pd
+    df = pd.read_excel(io.BytesIO(file_bytes), sheet_name="Item기준정보",
+                       engine="pyxlsb", header=0)
+    df.columns = [str(c).replace("\n", " ").strip() for c in df.columns]
+
+    def col(*subs, exact=None):
+        for c in df.columns:
+            if exact is not None and c == exact:
+                return c
+        for c in df.columns:
+            if all(s in c for s in subs):
+                return c
+        return None
+
+    c_code = col(exact="코드") or col("코드")
+    c_nm = col(exact="품목명") or col("품목명")
+    c_ip = col(exact="입수") or col("입수")
+    c_hadae = col("하대")
+    c_shelf = col("소비기한")
+    c_dam = col(exact="담당자") or col("담당자")
+    c_reg = col("품목등록일")
+    c_flag = col("Flag")
+
+    item, dam, flags = {}, {}, {}
+    for _, r in df.iterrows():
+        cv = r.get(c_code)
+        if cv is None or (isinstance(cv, float) and cv != cv):
+            continue
+        code = str(int(cv)) if isinstance(cv, (int, float)) else str(cv).strip()
+        if not code or code in ("nan", "None"):
+            continue
+        item[code] = {
+            "nm": (str(r.get(c_nm)).strip() if c_nm and r.get(c_nm) is not None else ""),
+            "ip": _numi(r.get(c_ip)) if c_ip else None,
+            "hadae": _numi(r.get(c_hadae)) if c_hadae else None,
+            "shelf": _numi(r.get(c_shelf)) if c_shelf else None,
+            "bm": None, "bd": None,
+        }
+        damv = r.get(c_dam) if c_dam else None
+        if damv is not None and str(damv).strip():
+            dam[code] = str(damv).strip()
+        flags[code] = {
+            "nm": item[code]["nm"],
+            "담당자": dam.get(code, ""),
+            "등록일": _mon_serial_to_date(r.get(c_reg)) if c_reg else None,
+            "flag": (str(r.get(c_flag)).strip() if c_flag and r.get(c_flag) is not None else ""),
+        }
+    return item, dam, flags
+
+
+def _synthesize_item_raw(item: dict) -> bytes:
+    """item dict → 전 소비자 로더 호환 xlsx 바이트 (ERP 31열 레이아웃 흉내).
+
+    - 이름 기반(coupang·OV5): 헤더 '배면'/'배단'/'Item code'/'소비기한(월)' 로 찾음.
+    - 위치 기반(실사지 inv_core): code=idx0, name=idx1, 배면=idx29, 배단=idx30.
+    배면=하대, 배단=1 → 배면×배단=하대. (모니터링 파일엔 하대가 직접 들어있음)
+    """
+    W = 31
+    header = [""] * W
+    header[0] = "Item code"; header[1] = "Item"; header[3] = "입수"
+    header[6] = "소비기한(월)"; header[29] = "배면"; header[30] = "배단"
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.append(header)
+    for code, v in item.items():
+        try:
+            ic = int(code)
+        except ValueError:
+            continue
+        row = [None] * W
+        row[0] = ic; row[1] = v.get("nm", ""); row[3] = v.get("ip")
+        row[6] = v.get("shelf"); row[29] = v.get("hadae")
+        row[30] = 1 if v.get("hadae") else None
+        ws.append(row)
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def save_monitoring(file_bytes: bytes) -> dict:
+    """모니터링 재고표 한 번에 반영: Item마스터 + 담당자 + 등록일/Flag.
+    반환 통계 {item, 담당자, flag, item_ok, dam_ok, flag_ok}."""
+    item, dam, flags = parse_monitoring(file_bytes)
+    # 1) Item 마스터 — 병합(모니터링 값이 우선, 기존 ERP 품목은 유지해 손실 방지)
+    existing, _ = load_item()
+    merged = dict(existing)
+    merged.update(item)
+    item_ok = _save(ITEM_KEY, ITEM_META, ITEM_SEED, merged,
+                    {"하대보유": sum(1 for v in merged.values() if v.get("hadae")),
+                     "출처": f"모니터링 재고표(+{len(item)}갱신)"})
+    # 2) coupang/OV5/실사지 호환 원본 합성 → item_raw (병합 전체 기준)
+    raw = _synthesize_item_raw(merged)
+    try:
+        ITEM_RAW_SEED.write_bytes(raw)
+    except Exception:
+        pass
+    if use_supabase():
+        try:
+            _sb().table("app_settings").upsert(
+                {"key": ITEM_RAW_KEY, "value": base64.b64encode(raw).decode()}).execute()
+        except Exception:
+            pass
+    # 3) 담당자 (공유 키) — 병합(기존 유지 + 모니터링 갱신)
+    dam_ok = False
+    if use_supabase() and dam:
+        try:
+            merged_dam = dict(load_damdangja())
+            merged_dam.update(dam)
+            _sb().table("app_settings").upsert(
+                {"key": DAMDANGJA_KEY, "value": merged_dam}, on_conflict="key").execute()
+            dam_ok = True
+        except Exception:
+            pass
+    # 4) 등록일/Flag (조회용)
+    flag_ok = False
+    if use_supabase():
+        try:
+            _sb().table("app_settings").upsert(
+                {"key": FLAG_KEY, "value": flags}, on_conflict="key").execute()
+            flag_ok = True
+        except Exception:
+            pass
+    _clear_cache()
+    if st is not None:
+        st.session_state.pop("_hub_item_raw_session", None)   # 합성본 재로딩
+    return {"item": len(item), "item_total": len(merged),
+            "담당자": len(dam), "flag": len(flags),
+            "item_ok": item_ok, "dam_ok": dam_ok, "flag_ok": flag_ok}
+
+
+def load_itemflags() -> dict:
+    """{코드: {nm,담당자,등록일,flag}} — 담당자·품목등록일 조회용. Supabase 전용."""
+    if not use_supabase():
+        return {}
+    try:
+        r = _sb().table("app_settings").select("value").eq("key", FLAG_KEY).execute()
         return (r.data[0].get("value") or {}) if r.data else {}
     except Exception:
         return {}

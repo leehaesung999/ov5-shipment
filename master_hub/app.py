@@ -21,6 +21,24 @@ if not store.use_supabase():
     st.warning("⚠️ Supabase 미설정(로컬 모드) — 업로드분은 이 앱 폴더의 시드파일에만 저장됩니다. "
                "라이브(클라우드)에서 공용 저장되려면 SUPABASE_URL/KEY 시크릿이 필요합니다.")
 
+# ---------- 🌟 모니터링 재고표로 한 번에 업데이트 ----------
+st.subheader("🌟 모니터링 재고표로 한 번에 업데이트 (.xlsb)")
+st.caption("`재고현황_NewForm(모니터링 재고표).xlsb`의 **Item기준정보** 시트로 "
+           "**Item마스터(하대·품명·입수·유통기한월) + 담당자 + 품목등록일/Flag**를 한 번에 갱신합니다. "
+           "쿠팡·OV5·실사지용 원본은 자동 합성됩니다.")
+up_mon = st.file_uploader("모니터링 재고표 .xlsb 업로드", type=["xlsb"], key="hub_mon")
+if up_mon is not None and st.button("📥 모니터링으로 일괄 갱신", type="primary", key="save_mon"):
+    try:
+        with st.spinner("파싱 중 (.xlsb는 다소 느립니다)…"):
+            r = store.save_monitoring(up_mon.getvalue())
+        tail = " (공용/Supabase)" if (r["item_ok"] or r["dam_ok"] or r["flag_ok"]) else " (로컬 시드)"
+        st.success(f"일괄 갱신 완료 — Item {r['item']:,}개 갱신(전체 {r.get('item_total', r['item']):,}) · "
+                   f"담당자 {r['담당자']:,} · 등록일/Flag {r['flag']:,}{tail}")
+        st.rerun()
+    except Exception as e:
+        st.error(f"갱신 실패: {e}")
+st.divider()
+
 item_data, item_meta = store.load_item()
 loc_data, loc_meta = store.load_loc()
 
@@ -100,3 +118,46 @@ with st.expander("미리보기 (상위 20행)"):
         st.markdown("**고정로케이션 매핑**")
         lr = [{"코드": k, "고정로케이션": v} for k, v in list(loc_data.items())[:20]]
         st.dataframe(pd.DataFrame(lr), width="stretch", hide_index=True)
+
+st.divider()
+
+# ---------- 🔎 품목 담당자·등록일 조회 (검색/정렬) ----------
+st.subheader("🔎 품목 담당자·등록일 조회")
+_flags = store.load_itemflags()
+if not _flags:
+    st.info("모니터링 재고표를 먼저 업로드하면 담당자·품목등록일·Flag를 검색/정렬할 수 있습니다.")
+else:
+    fdf = pd.DataFrame([{"코드": k, "품명": v.get("nm"), "담당자": v.get("담당자"),
+                         "품목등록일": v.get("등록일"), "Flag": v.get("flag")}
+                        for k, v in _flags.items()])
+    fc = st.columns([2, 1, 1, 1])
+    q = fc[0].text_input("검색 (코드·품명·담당자)", key="flag_q")
+    dam_opts = sorted([x for x in fdf["담당자"].dropna().unique() if str(x).strip()])
+    flag_opts = sorted([x for x in fdf["Flag"].dropna().unique() if str(x).strip()])
+    dam_sel = fc[1].multiselect("담당자", dam_opts, key="flag_dam")
+    flag_sel = fc[2].multiselect("Flag", flag_opts, key="flag_flag")
+    sort_col = fc[3].selectbox("정렬", ["담당자", "품목등록일", "Flag", "코드", "품명"], key="flag_sort")
+
+    view = fdf
+    if q:
+        ql = q.strip().lower()
+        view = view[view.apply(
+            lambda r: ql in str(r["코드"]).lower() or ql in str(r["품명"]).lower()
+            or ql in str(r["담당자"]).lower(), axis=1)]
+    if dam_sel:
+        view = view[view["담당자"].isin(dam_sel)]
+    if flag_sel:
+        view = view[view["Flag"].isin(flag_sel)]
+    view = view.sort_values(sort_col, na_position="last", kind="stable")
+
+    _flagcnt = ", ".join(f"{k}:{int((fdf['Flag'] == k).sum())}" for k in flag_opts)
+    st.caption(f"{len(view):,} / {len(fdf):,}품목  ·  담당자 {len(dam_opts)}명  ·  Flag {_flagcnt}")
+    st.dataframe(view, width="stretch", hide_index=True, height=460)
+
+    import io as _io
+    _buf = _io.BytesIO()
+    with pd.ExcelWriter(_buf, engine="openpyxl") as _w:
+        view.to_excel(_w, index=False, sheet_name="담당자_등록일")
+    st.download_button("📥 조회결과 다운로드 (xlsx)", _buf.getvalue(),
+                       "담당자_품목등록일.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
