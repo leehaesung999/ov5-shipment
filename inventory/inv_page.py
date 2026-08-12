@@ -378,13 +378,12 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
         else:
             st.warning("기준정보 없음 — 업로드 필요")
         st.divider()
-        st.caption("물품담당자(개인정보) — 유통기한 분석의 '공유여부' 자동채움용. 공개 레포 대신 Supabase 저장.")
-        up_dam = st.file_uploader("물품담당자 xlsx 업로드(갱신)", type=["xlsx"], key="inv_dam")
-        _dam_src, _dam_n = _setup_담당자(up_dam)
+        st.caption("물품담당자(개인정보)는 **공용 기준정보 관리**에서 올리면 자동 반영됩니다.")
+        _dam_src, _dam_n = _setup_담당자(None)   # 공유 키(inventory_담당자)에서 로드
         if _dam_n:
-            st.success(f"담당자 {_dam_n}명 적용 ({_dam_src})")
+            st.success(f"담당자 {_dam_n}명 (공용)")
         else:
-            st.warning("담당자 미적용 — 공유여부 자동채움 생략")
+            st.caption("담당자 미등록 — 공용 기준정보 관리에서 등록하세요.")
         st.divider()
         st.caption("지정로케이션 — 일일/토요일 실사지 대상 위치(1단). 바뀌면 업로드하면 저장·공유됩니다.")
         up_loc = st.file_uploader("지정로케이션 xlsx 업로드(갱신)", type=["xlsx"], key="inv_loc")

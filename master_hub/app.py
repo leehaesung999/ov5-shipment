@@ -64,6 +64,29 @@ with c2:
 
 st.divider()
 
+# ---------- ③ 물품담당자 ----------
+st.subheader("③ 물품담당자 (개인정보 · 공유)")
+_dam = store.load_damdangja()
+if _dam:
+    st.success(f"등록됨: **{len(_dam):,}명 매핑** — 실사지/점검·재고출고시점과 공유")
+else:
+    st.info("아직 등록된 물품담당자가 없습니다." +
+            ("" if store.use_supabase() else " (로컬 모드는 Supabase 필요)"))
+up_dam = st.file_uploader("물품담당자 xlsx 업로드 (코드·담당자 열)", type=["xlsx"], key="hub_dam")
+if up_dam is not None and st.button("물품담당자 저장", type="primary", key="save_dam"):
+    try:
+        n, ok = store.save_damdangja(up_dam.getvalue())
+        if ok:
+            st.success(f"저장 완료: {n:,}명 (공용/Supabase) — 실사지·재고출고시점에 자동 반영")
+        else:
+            st.warning(f"파싱 {n:,}명 — 저장 실패(로컬은 Supabase 미설정)")
+        st.rerun()
+    except Exception as e:
+        st.error(f"저장 실패: {e}")
+st.caption("담당자는 개인정보라 저장소(Supabase)에만 보관하고 파일/시드로 남기지 않습니다.")
+
+st.divider()
+
 # ---------- 미리보기 ----------
 with st.expander("미리보기 (상위 20행)"):
     if item_data:

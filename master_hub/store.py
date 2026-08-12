@@ -219,6 +219,66 @@ def item_raw() -> bytes | None:
     return None
 
 
+# ---------------- 물품담당자 (개인정보 → Supabase만, 시드 없음) ----------------
+# 실사지/점검·재고출고시점(jaego)이 공유하는 기존 키를 그대로 사용 → 소비자 무변경.
+DAMDANGJA_KEY = "inventory_담당자"
+
+
+def parse_damdangja(file_bytes: bytes) -> dict:
+    """물품담당자 xlsx → {코드(str): 담당자}. 헤더에서 '코드'/'담당자' 열 탐색, 없으면 A/B."""
+    wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    ws = wb.active
+    header = next(ws.iter_rows(min_row=1, max_row=1, values_only=True), ())
+    code_i, name_i = None, None
+    for i, h in enumerate(header):
+        if h is None:
+            continue
+        ht = str(h).strip()
+        if code_i is None and ht == "코드":
+            code_i = i
+        elif name_i is None and ht == "담당자":
+            name_i = i
+    if code_i is None or name_i is None:
+        code_i, name_i = 0, 1
+    m: dict[str, str] = {}
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if not row or code_i >= len(row) or name_i >= len(row):
+            continue
+        cval, nval = row[code_i], row[name_i]
+        if cval is None:
+            continue
+        code = str(int(cval)) if isinstance(cval, (int, float)) else str(cval).strip()
+        name = str(nval).strip() if nval is not None else None
+        if code and name:
+            m[code] = name
+    wb.close()
+    return m
+
+
+def save_damdangja(file_bytes: bytes) -> tuple[int, bool]:
+    """담당자 매핑을 공유 키(inventory_담당자)에 저장. 개인정보라 시드 없음(Supabase 전용)."""
+    data = parse_damdangja(file_bytes)
+    if not use_supabase():
+        return len(data), False
+    try:
+        _sb().table("app_settings").upsert(
+            {"key": DAMDANGJA_KEY, "value": data}, on_conflict="key").execute()
+        return len(data), True
+    except Exception:
+        return len(data), False
+
+
+def load_damdangja() -> dict:
+    """공유 키(inventory_담당자)에서 {코드: 담당자} 로드. Supabase 전용."""
+    if not use_supabase():
+        return {}
+    try:
+        r = _sb().table("app_settings").select("value").eq("key", DAMDANGJA_KEY).execute()
+        return (r.data[0].get("value") or {}) if r.data else {}
+    except Exception:
+        return {}
+
+
 def item_raw_session() -> bytes | None:
     """세션당 1회만 원본 Item 바이트를 가져와 재사용(매 rerun Supabase 재요청 방지)."""
     if st is None:
