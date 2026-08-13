@@ -183,6 +183,75 @@ def add_code_remap(old, new, ip=None, plt=None) -> bool:
         return False
 
 
+# ---------- 신규품목 초기기준 (유사품 기반) ----------
+NKEY = "ss_new_items"
+NEWITEMS_SEED = DATA / "new_items_seed.json"
+
+
+def load_new_items() -> list:
+    """번들 시드 ∪ Supabase 신규품목 등록. code로 중복제거(Supabase 우선)."""
+    seed = []
+    if NEWITEMS_SEED.exists():
+        try:
+            seed = json.loads(NEWITEMS_SEED.read_text(encoding="utf-8"))
+        except Exception:
+            seed = []
+    extra = []
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", NKEY).execute()
+            if r.data and r.data[0].get("value"):
+                extra = r.data[0]["value"] or []
+        except Exception:
+            pass
+    merged = {}
+    for r in list(seed) + list(extra):
+        c = str(r.get("code", "")).strip()
+        if c and str(r.get("analog", "")).strip():
+            merged[c] = {"code": c, "nm": r.get("nm", ""),
+                         "ip": r.get("ip"), "plt": r.get("plt"),
+                         "analog": str(r.get("analog")).strip(),
+                         "factor": r.get("factor") or 1.0}
+    return list(merged.values())
+
+
+def add_new_item(code, analog, ip=None, plt=None, nm="", factor=1.0) -> bool:
+    """신규품목 초기기준 1건 Supabase 저장(동일 code 있으면 갱신)."""
+    cur = []
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", NKEY).execute()
+            if r.data and r.data[0].get("value"):
+                cur = r.data[0]["value"] or []
+        except Exception:
+            pass
+    cur = [c for c in cur if str(c.get("code")) != str(code)]
+    cur.append({"code": str(code), "analog": str(analog), "nm": nm,
+                "ip": int(ip) if ip else None, "plt": int(plt) if plt else None,
+                "factor": float(factor) if factor else 1.0})
+    if not use_supabase():
+        return False
+    try:
+        _sb().table("app_settings").upsert({"key": NKEY, "value": cur}).execute()
+        return True
+    except Exception:
+        return False
+
+
+def remove_new_item(code) -> bool:
+    """신규품목 등록 해제(자립 후 정리 등)."""
+    if not use_supabase():
+        return False
+    try:
+        r = _sb().table("app_settings").select("value").eq("key", NKEY).execute()
+        cur = (r.data[0].get("value") or []) if r.data else []
+        cur = [c for c in cur if str(c.get("code")) != str(code)]
+        _sb().table("app_settings").upsert({"key": NKEY, "value": cur}).execute()
+        return True
+    except Exception:
+        return False
+
+
 def load_master() -> dict:
     if MASTER.exists():
         with open(MASTER, "r", encoding="utf-8") as f:

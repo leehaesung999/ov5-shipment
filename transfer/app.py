@@ -273,12 +273,17 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
                 if any(r.get("배정창고") == wh and isinstance(r.get("★이동_박스"), (int, float))
                        and r["★이동_박스"] > 0 for r in rows):
                     wh_pallets[wh] = _pallet_xlsx(rows, plan_date, only_wh=wh)
+        # 미등록 신규품목: 재고파일엔 있는데 안전재고 기준(baseline)에 없는 코드
+        unreg = [{"품목코드": c, "현재고": v.get("cur")}
+                 for c, v in stock.items()
+                 if c not in baseline and (v.get("cur") or 0) > 0]
         # 세션에 저장(반영완료 버튼이 결과를 유지하도록)
         st.session_state["t_result"] = {
             "df": df, "summ": T.summarize(rows),
             "xlsx": buf.getvalue(), "pallet": _pallet_xlsx(rows, plan_date),
             "wh_pallets": wh_pallets,
             "estat": estat, "new_ids": sorted(new_ids),
+            "unreg": unreg,
             "hide_missing": len(stock) < len(baseline),
         }
     except Exception as e:
@@ -294,6 +299,15 @@ if res:
     m[2].metric("총 파레트", f"{summ['총파레트']}")
     m[3].metric("가용부족", f"{summ['가용부족']}")
     m[4].metric("결품/안전재고이하", f"{summ.get('결품',0)}/{summ.get('안전재고이하',0)}")
+
+    # 미등록 신규품목 (재고엔 있는데 안전재고 기준 없음 → 계획 누락)
+    unreg = res.get("unreg") or []
+    if unreg:
+        with st.expander(f"🆕 미등록 신규품목 {len(unreg)}개 — 안전재고 기준 없음(계획 누락)",
+                         expanded=True):
+            st.caption("재고파일엔 있으나 안전재고 기준(baseline)이 없어 이동계획에 안 잡힌 품목입니다. "
+                       "'안전재고 산출' 페이지의 🆕신규품목 초기기준(유사품 기반)에 등록 후 재계산·적용하세요.")
+            st.dataframe(pd.DataFrame(unreg), width="stretch", hide_index=True)
 
     # 소진 경고 (행사 초과 등으로 안전재고 밑까지 소진 / 결품)
     burn_rows = [r for r in df.to_dict("records") if r.get("소진경고")]

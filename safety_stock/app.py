@@ -89,6 +89,7 @@ if use_hub:
 # 품목코드 승계(입수변경 등으로 코드 변경) — 구코드 이력·마스터를 신코드로 이전
 remap = store.load_code_remap()
 remap_log = core.apply_code_remap(history, master, remap)
+new_items = store.load_new_items()   # 신규품목 초기기준(유사품 기반)
 
 meta = store.history_meta()
 c1, c2, c3 = st.columns(3)
@@ -131,6 +132,49 @@ with st.expander(f"🔀 품목코드 승계 (입수변경) — 적용 {len(remap
                 st.rerun()
             else:
                 st.error("구코드·신코드를 입력하세요.")
+
+# ---------- 신규품목 초기기준 (유사품 기반, 이력 없는 신제품) ----------
+with st.expander(f"🆕 신규품목 초기기준 (유사품 기반) — 등록 {len(new_items)}건", expanded=False):
+    st.caption("판매이력이 없는 신제품은 **비슷한 기존 품목**의 수요패턴(일평균·변동)을 "
+               "계수배해 초기 Min/Max를 잡습니다. 판매일수가 임계(기본 30일)를 넘으면 "
+               "**자기 통계로 자동 전환**(자립)됩니다. 신규품목은 '재고이동 계획'에서 재고는 있는데 "
+               "기준이 없으면 ⚠️미등록 경고로 알려줍니다.")
+    if new_items:
+        prev, _pinfo = core.compute(dict(history), dict(master), settings, None, new_items)
+        seeded = {r["품목코드"]: r for r in prev
+                  if str(r.get("비고", "")).startswith("신규(유사")
+                  or "신규(자립)" in str(r.get("비고", ""))}
+        st.dataframe(pd.DataFrame([{
+            "신규코드": n["code"], "품목명": n.get("nm", ""),
+            "유사품목": n["analog"], "계수": n.get("factor", 1.0),
+            "입수": n.get("ip"),
+            "현재상태": ("자립(자기통계)" if "신규(자립)" in str(seeded.get(n["code"], {}).get("비고", ""))
+                     else ("시드적용" if n["code"] in seeded else "유사품 이력없음")),
+            "Min": seeded.get(n["code"], {}).get("Min(발주점,EA)"),
+            "Max": seeded.get(n["code"], {}).get("Max(목표재고,EA)"),
+        } for n in new_items]), width="stretch", hide_index=True)
+    else:
+        st.info("등록된 신규품목이 없습니다.")
+    with st.form("newitem_add", clear_on_submit=True):
+        nc = st.columns([1, 1.4, 1, 1, 1, 0.8])
+        n_code = nc[0].text_input("신규코드")
+        n_nm = nc[1].text_input("품목명")
+        n_analog = nc[2].text_input("유사품목코드")
+        n_ip = nc[3].number_input("입수", 1, 9999, 24)
+        n_plt = nc[4].number_input("하대박스수(선택)", 0, 9999, 0)
+        n_factor = nc[5].number_input("계수", 0.1, 5.0, 1.0, 0.1)
+        if st.form_submit_button("➕ 신규품목 등록", type="secondary"):
+            if n_code.strip() and n_analog.strip():
+                if n_analog.strip() not in history:
+                    st.warning(f"유사품목 {n_analog}의 판매이력이 없습니다. 이력 있는 코드를 지정하세요.")
+                else:
+                    ok = store.add_new_item(n_code.strip(), n_analog.strip(), n_ip,
+                                            n_plt or None, n_nm.strip(), n_factor)
+                    st.success("등록됨" + (" (Supabase)" if ok else " (로컬은 시드파일로만)")
+                               + " — 재계산하면 반영됩니다.")
+                    st.rerun()
+            else:
+                st.error("신규코드·유사품목코드를 입력하세요.")
 
 st.divider()
 
@@ -182,7 +226,7 @@ if up is not None:
 # ---------- 재계산 ----------
 st.subheader("2️⃣ 안전재고 재계산")
 if st.button("🔄 최근 12개월로 재계산", type="primary"):
-    rows, info = core.compute(history, master, settings)
+    rows, info = core.compute(history, master, settings, None, new_items)
     if not rows:
         st.warning("히스토리가 비어있습니다. 실적을 먼저 반영하세요.")
     else:
@@ -193,6 +237,12 @@ if st.button("🔄 최근 12개월로 재계산", type="primary"):
         i2.metric("안전재고 합계", f"{tot:,.0f} EA")
         i3.metric("계산 기간", f"{info['시작']} ~ {info['종료']}")
         i4.metric("노출기간", f"{info['노출기간']}일")
+        if info.get("신규시드") or info.get("신규자립") or info.get("신규_유사품없음"):
+            msg = (f"신규품목: 유사품 시드 {info.get('신규시드',0)}건 · "
+                   f"자립(자기통계) {info.get('신규자립',0)}건")
+            if info.get("신규_유사품없음"):
+                msg += f" · ⚠️ 유사품 이력없음 {len(info['신규_유사품없음'])}건({', '.join(info['신규_유사품없음'][:5])})"
+            st.info(msg)
         st.dataframe(df, width="stretch", height=460)
 
         # 엑셀 다운로드

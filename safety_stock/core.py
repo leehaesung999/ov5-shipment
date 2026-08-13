@@ -30,6 +30,7 @@ DEFAULT_SETTINGS = {
     "z": 2.33,           # 서비스레벨 계수 (2.33=99%)
     "batch": 15,         # 발주배치(일)
     "window_months": 12, # 롤링 기간(개월)
+    "new_item_grad_days": 30,  # 신규품목 자립(자기 통계 전환) 임계 판매일수
 }
 PROMO_MULT = 4          # 시드용 딜 판정(중앙값×배수) — CJ실적엔 미사용
 DIL_ABS_MIN = 30
@@ -64,65 +65,135 @@ def nondeal_series(hist_item, dates):
     return out
 
 
-def compute(history, master, settings=None, uplift=None):
+def _item_stats(hist_item, dates, ndays, exp):
+    """품목 이력에서 (일평균, σ, 활성판매일수) 반환. 창내 수요 0이면 None."""
+    ser = nondeal_series(hist_item, dates)
+    total = sum(ser)
+    if total <= 0:
+        return None
+    rate = total / ndays
+    win = [sum(ser[i:i + exp]) for i in range(len(ser) - exp + 1)]
+    sigma = _sd(win)
+    active = sum(1 for d in dates if d in hist_item)
+    return rate, sigma, active
+
+
+def _ss_row(code, ip, plt, nm, cat, rate, sigma, z, lead, batch,
+            deal_days=0, note_extra=""):
+    """일평균·σ 로 안전재고 산출 행 1건 생성(박스단위 정렬)."""
+    no_ip = not ip
+    ip = ip or 1
+    ss = max(ip, math.ceil(z * sigma / ip) * ip)       # 안전재고(박스올림)
+    ss_box = ss // ip
+    mn = math.ceil(rate * lead + ss)                   # Min(발주점, EA)
+    mx = max(math.ceil((mn + rate * batch) / ip),
+             math.ceil((mn + 1) / ip)) * ip             # Max(박스배수)
+    mx_box = mx // ip
+    return {
+        "품목코드": str(code),
+        "품목명": nm or "",
+        "카테고리": cat or "",
+        "입수": ip,
+        "하대박스수": plt,
+        "일평균(딜제외)": round(rate, 1),
+        "딜발생일": deal_days,
+        "안전재고_박스": ss_box,
+        "안전재고_EA": ss,
+        "Min(발주점,EA)": mn,
+        "Max(목표재고,EA)": mx,
+        "초기이관_박스": mx_box,
+        "초기이관_EA": mx,
+        "이관_파레트": round(mx_box / plt, 2) if plt else None,
+        "비고": " / ".join(x for x in [
+            ("입수미상(1로가정)" if no_ip else ""),
+            ("하대박스없음" if not plt else ""),
+            note_extra,
+        ] if x),
+    }
+
+
+def compute(history, master, settings=None, uplift=None, new_items=None):
     """안전재고 산출표(품목별 dict 리스트) 반환.
 
     uplift: {품목코드: 계수} 결품보정(선택). 없으면 미적용.
+    new_items: 신규품목 초기기준(유사품 기반) 리스트
+       [{"code","nm","ip","plt","analog"(유사품목코드),"factor"(계수)}].
+       판매일수가 임계(new_item_grad_days) 미만인 신규품목은 유사품 수요패턴을
+       계수배해 초기 Min/Max 산출. 이력이 충분히 쌓이면 자기 통계로 자동 전환.
     """
     s = {**DEFAULT_SETTINGS, **(settings or {})}
     lead, cycle, z, batch = s["lead_time"], s["cycle"], s["z"], s["batch"]
     exp = int(lead + cycle)                    # 노출기간
+    grad = int(s.get("new_item_grad_days", 30))
     uplift = uplift or {}
+
+    # 신규품목 등록 정리 + 마스터에 입수/하대 주입(자립 시 박스정렬 위해)
+    new_reg = {str(r["code"]): r for r in (new_items or [])
+               if r.get("code") and r.get("analog")}
+    for scode, reg in new_reg.items():
+        m = dict(master.get(scode) or {})
+        if reg.get("ip"):
+            m["ip"] = int(reg["ip"])
+        if reg.get("plt"):
+            m["plt"] = int(reg["plt"])
+        if reg.get("nm") and not m.get("nm"):
+            m["nm"] = reg["nm"]
+        master[scode] = m
 
     dates = _rolling_dates(history, s["window_months"])
     ndays = len(dates)
     rows = []
+    n_grad = 0
     for code, hist_item in history.items():
-        ser = nondeal_series(hist_item, dates)
-        if sum(ser) <= 0:
+        scode = str(code)
+        stx = _item_stats(hist_item, dates, ndays, exp)
+        if stx is None:
             continue
-        m = master.get(str(code), {})
-        ip = m.get("ip") or 1
-        no_ip = not m.get("ip")
-        plt = m.get("plt")
-        rate = sum(ser) / ndays                # 비딜 일평균
-        u = uplift.get(str(code), 1.0)
-        win = [sum(ser[i:i + exp]) for i in range(len(ser) - exp + 1)]
-        sigma = _sd(win) * u
-        ss = max(ip, math.ceil(z * sigma / ip) * ip)   # 안전재고(박스올림)
-        ss_box = ss // ip
-        mn = math.ceil(rate * lead + ss)               # Min(발주점, EA)
-        mx = max(math.ceil((mn + rate * batch) / ip),
-                 math.ceil((mn + 1) / ip)) * ip         # Max(박스배수)
-        mx_box = mx // ip
+        rate, sigma, active = stx
+        is_new = scode in new_reg
+        if is_new and active < grad:
+            continue                            # 아직 자립 전 → 아래서 유사품 시드
+        m = master.get(scode, {})
+        u = uplift.get(scode, 1.0)
         deal_days = sum(1 for d in dates if (hist_item.get(d) or [0, 0])[1] > 0)
-        rows.append({
-            "품목코드": str(code),
-            "품목명": m.get("nm", ""),
-            "카테고리": m.get("cat", ""),
-            "입수": ip,
-            "하대박스수": plt,
-            "일평균(딜제외)": round(rate, 1),
-            "딜발생일": deal_days,
-            "안전재고_박스": ss_box,
-            "안전재고_EA": ss,
-            "Min(발주점,EA)": mn,
-            "Max(목표재고,EA)": mx,
-            "초기이관_박스": mx_box,
-            "초기이관_EA": mx,
-            "이관_파레트": round(mx_box / plt, 2) if plt else None,
-            "비고": " / ".join(x for x in [
-                ("입수미상(1로가정)" if no_ip else ""),
-                ("하대박스없음" if not plt else ""),
-                (f"결품보정×{round(u,2)}" if u > 1.0 else ""),
-            ] if x),
-        })
+        rows.append(_ss_row(scode, m.get("ip"), m.get("plt"), m.get("nm"),
+                            m.get("cat"), rate, sigma * u, z, lead, batch,
+                            deal_days,
+                            note_extra=(f"결품보정×{round(u,2)}" if u > 1.0 else "")
+                            + (" / 신규(자립)" if is_new else "")))
+        if is_new:
+            n_grad += 1
+
+    # 유사품 기반 신규품목 시드 (자립 전인 것)
+    n_seed = 0
+    no_analog = []
+    for scode, reg in new_reg.items():
+        hist_item = history.get(scode, {})
+        stx = _item_stats(hist_item, dates, ndays, exp)
+        if stx is not None and stx[2] >= grad:
+            continue                            # 이미 자립 → 위에서 처리됨
+        an = history.get(str(reg["analog"]))
+        an_stx = _item_stats(an, dates, ndays, exp) if an else None
+        if an_stx is None:
+            no_analog.append(scode)
+            continue
+        f = float(reg.get("factor") or 1.0)
+        m = master.get(scode, {})
+        rows.append(_ss_row(scode, m.get("ip"), m.get("plt"),
+                            m.get("nm") or reg.get("nm"), m.get("cat"),
+                            an_stx[0] * f, an_stx[1] * f, z, lead, batch, 0,
+                            note_extra=f"신규(유사 {reg['analog']}×{round(f,2)})"))
+        n_seed += 1
+
     rows.sort(key=lambda r: -r["초기이관_EA"])
     return rows, {"기간일수": ndays,
                   "시작": dates[0] if dates else None,
                   "종료": dates[-1] if dates else None,
                   "품목수": len(rows),
-                  "노출기간": exp}
+                  "노출기간": exp,
+                  "신규시드": n_seed,
+                  "신규자립": n_grad,
+                  "신규_유사품없음": no_analog}
 
 
 # ---------- 월별 CJ출고실적 → 히스토리 조각 ----------
