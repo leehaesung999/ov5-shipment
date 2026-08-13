@@ -63,6 +63,47 @@ def _apply_hub_master(master: dict, history: dict) -> dict:
             m["nm"] = h_nm
     return st_
 
+
+def _stock_codes(file) -> dict:
+    """BNF 상품별재고현황(.xls/.xlsx)에서 {코드: 현재고} 최소 추출(신규품목 후보 탐색용).
+    transfer.parse_stock 와 동일한 헤더·코드 규칙(출고가능량 우선)."""
+    df = pd.read_excel(io.BytesIO(file.getvalue()), header=None, dtype=object)
+    hrow = 0
+    for i in range(min(6, len(df))):
+        vals = [str(x).strip() for x in df.iloc[i].tolist()]
+        if any(v in ("상품코드", "품목코드", "CJ코드", "제품코드") for v in vals):
+            hrow = i
+            break
+    hdr = [str(x).strip() for x in df.iloc[hrow].tolist()]
+
+    def find(names, d=None):
+        for j, h in enumerate(hdr):
+            if h in names:
+                return j
+        return d
+    ci = find(("상품코드", "품목코드", "CJ코드", "제품코드", "코드"), 0)
+    cur_i = find(("출고가능량", "출고가능", "실가용재고", "가용재고"))
+    if cur_i is None:
+        cur_i = find(("재고수량", "현재고", "현재고(EA)", "재고EA"), 1)
+    out = {}
+    for r in range(hrow + 1, len(df)):
+        row = df.iloc[r].tolist()
+        c = row[ci] if ci < len(row) else None
+        if c is None:
+            continue
+        c = str(int(c)) if isinstance(c, float) else str(c).strip()
+        if not (c.isdigit() or c.startswith("P")):
+            continue
+        cur = None
+        if cur_i is not None and cur_i < len(row):
+            try:
+                cur = float(row[cur_i])
+            except (TypeError, ValueError):
+                cur = None
+        out[c] = cur
+    return out
+
+
 KST = timezone(timedelta(hours=9))
 
 st.title("📐 BNF(비네이버) 안전재고 산출")
@@ -155,6 +196,55 @@ with st.expander(f"🆕 신규품목 초기기준 (유사품 기반) — 등록 
         } for n in new_items]), width="stretch", hide_index=True)
     else:
         st.info("등록된 신규품목이 없습니다.")
+
+    # 재고파일로 신규품목 자동 추출 — 재고 있는데 이력 없는 코드 → 유사품만 지정
+    st.markdown("**📄 재고파일로 신규품목 자동 추출** (재고엔 있고 이력 없는 것)")
+    up_ni = st.file_uploader("BNF 상품별재고현황(.xls/.xlsx) 업로드 → 신규품목 후보 자동 추출",
+                             type=["xls", "xlsx"], key="ni_stock")
+    if up_ni is not None:
+        try:
+            scodes = _stock_codes(up_ni)
+            reg = {str(n["code"]) for n in new_items}
+            cand = [c for c, cur in scodes.items()
+                    if c not in history and c not in reg and (cur or 0) > 0]
+            if not cand:
+                st.success("재고파일에 미등록 신규품목이 없습니다 (모두 기준 보유).")
+            else:
+                an_opts = ["(선택 안함)"] + [
+                    f"{c} {master.get(str(c), {}).get('nm', '')}".strip()
+                    for c in sorted(history)]
+                st.caption(f"{len(cand)}개 후보 — **유사품과 계수만** 정하면 됩니다. "
+                           "입수·품명은 허브값을 자동 사용합니다.")
+                with st.form("ni_bulk", clear_on_submit=True):
+                    picks = {}
+                    for c in cand:
+                        m = master.get(c, {})
+                        cc = st.columns([1, 2, 2, 1])
+                        cc[0].markdown(f"`{c}`")
+                        cc[1].markdown(f"{m.get('nm') or '(품명 미상)'} · 입수 {m.get('ip') or '?'}")
+                        an = cc[2].selectbox("유사품", an_opts, key=f"ni_an_{c}",
+                                             label_visibility="collapsed")
+                        fac = cc[3].number_input("계수", 0.1, 5.0, 1.0, 0.1,
+                                                 key=f"ni_fac_{c}", label_visibility="collapsed")
+                        picks[c] = (an, fac)
+                    if st.form_submit_button("➕ 선택한 후보 등록", type="primary"):
+                        n = 0
+                        for c, (an, fac) in picks.items():
+                            if an and an != "(선택 안함)":
+                                acode = an.split()[0]
+                                m = master.get(c, {})
+                                store.add_new_item(c, acode, m.get("ip"), m.get("plt"),
+                                                   m.get("nm", ""), fac)
+                                n += 1
+                        if n:
+                            st.success(f"{n}건 등록 — 아래 2️⃣ 재계산 후 '적용'하면 이동계획에 반영됩니다.")
+                            st.rerun()
+                        else:
+                            st.warning("유사품을 하나도 선택하지 않았습니다.")
+        except Exception as e:
+            st.error(f"후보 추출 실패: {e}")
+
+    st.markdown("**✏️ 직접 등록**")
     with st.form("newitem_add", clear_on_submit=True):
         nc = st.columns([1, 1.4, 1, 1, 1, 0.8])
         n_code = nc[0].text_input("신규코드")
