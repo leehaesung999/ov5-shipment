@@ -1262,7 +1262,7 @@ for p in edited_pallets:
         '품목 수': len(p['items']),
         '총 박스': box_sum,
         'Plt합': round(plt_sum, 4),
-        '품목 목록': ' / '.join(it['name'] for it in p['items']),
+        '품목 목록': ' / '.join(str(it['name'] or it['item_code']) for it in p['items']),
     })
 st.dataframe(pd.DataFrame(summary_rows), use_container_width=True, hide_index=True)
 
@@ -1487,7 +1487,7 @@ if output_mode.startswith('FCJ'):
                            if not lookup_barcode(it['item_code'], master)]
                 if missing:
                     st.warning(f"바코드 미매핑 품목 {len(missing)}개: " +
-                               ', '.join(sorted({it['name'][:14] for it in missing}))[:200])
+                               ', '.join(sorted({str(it['name'] or it['item_code'])[:14] for it in missing}))[:200])
 
             st.download_button(
                 '⬇️ FCJ 양식 Excel 다운로드 (파레트별 시트)',

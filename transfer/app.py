@@ -217,7 +217,7 @@ def _pallet_xlsx(rows, plan_d, only_wh=None):
         plt = row["하대박스수"]                 # 1파레트당 박스수(구분기 plt환산=박스/파레트 분할기준)
         plt1 = row["파레트환산"]                # 파레트 점유율(=이동박스/하대)
         ws.cell(r, 1, row["품목코드"])
-        ws.cell(r, 2, row["품목명"])
+        ws.cell(r, 2, row["품목명"] or row["품목코드"])   # 빈 품명→코드(파레트 구분기 None 방지)
         ws.cell(r, 3, row["입수"])
         ws.cell(r, 4, int(mb))
         ws.cell(r, 5, row["이동_EA"])
