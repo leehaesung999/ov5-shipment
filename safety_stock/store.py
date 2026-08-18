@@ -281,6 +281,7 @@ def save_baseline(rows: list, settings: dict) -> bool:
         "nm": r.get("품목명", ""), "ip": r["입수"], "plt": r.get("하대박스수"),
         "rate": r["일평균(딜제외)"], "ss": r["안전재고_EA"],
         "mn": r["Min(발주점,EA)"], "mx": r["Max(목표재고,EA)"],
+        "months": r.get("months"),   # 계절(월별) Min/Max·SS 프로파일
         "note": r.get("비고", ""),
     } for r in rows}
     meta = {"품목수": len(base),

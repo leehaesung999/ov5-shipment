@@ -258,7 +258,8 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
             reflected = store.load_reflected_events()
             events, new_ids, estat = parse_events_new(up_evt, plan_date, reflected)
 
-        rows = T.compute_transfer(baseline, stock, avail, incoming, events, ended)
+        rows = T.compute_transfer(baseline, stock, avail, incoming, events, ended,
+                                  plan_month=plan_date.month)   # 계절(계획월) 기준
         if up_loc:                              # 창고 배정(로케이션재고)
             loc_inv = parse_location(up_loc, T.WH_SOURCES)
             T.allocate_warehouse(rows, loc_inv)
@@ -360,6 +361,10 @@ if res:
             cols[i].download_button(f"🧱 {wh}", data,
                                     file_name=f"파레트입력_{wh}_{plan_date:%y%m%d}.xlsx",
                                     mime=MIME, width="stretch", key=f"wp_{wh}")
+    _seasonal = any(r.get("months") for r in baseline.values())
+    st.caption(f"📅 **계획일자 {plan_date:%m}월의 계절 Min/Max** 기준으로 산출"
+               + ("" if _seasonal else " (구 기준: 연 고정값)") + ". "
+               "겨울 성수기엔 높게·비수기엔 낮게 자동 반영됩니다.")
     st.caption("이동=MIN(요청,출고가능,할당) 박스. 행사는 header_id로 신규만 반영(중복 방지). "
                "창고배정=단독가능 창고 중 유통기한 빠른 것(동점 IC930). 분할필요/재고없음은 ⚠️경고. "
                "🧱 창고별 파일을 각 창고 'BNF 파레트 구분기'에 올리면 창고별 피킹 파레트가 나옵니다.")

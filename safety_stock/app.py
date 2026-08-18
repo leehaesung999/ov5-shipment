@@ -317,14 +317,20 @@ if up is not None:
 st.subheader("2️⃣ 안전재고 재계산")
 if st.button("🔄 최근 12개월로 재계산", type="primary"):
     rows, info = core.compute(history, master, settings, None, new_items)
+    st.session_state["ss_result"] = {"rows": rows, "info": info, "settings": settings}
+
+res = st.session_state.get("ss_result")
+if res:
+    rows, info = res["rows"], res["info"]
     if not rows:
         st.warning("히스토리가 비어있습니다. 실적을 먼저 반영하세요.")
     else:
-        df = pd.DataFrame(rows)
+        by = {r["품목코드"]: r for r in rows}
+        df = pd.DataFrame(rows).drop(columns=["months"], errors="ignore")  # dict컬럼 표시 제외
         tot = df["안전재고_EA"].sum()
         i1, i2, i3, i4 = st.columns(4)
         i1.metric("대상 품목", f"{info['품목수']:,}")
-        i2.metric("안전재고 합계", f"{tot:,.0f} EA")
+        i2.metric("안전재고 합계(연 기준)", f"{tot:,.0f} EA")
         i3.metric("계산 기간", f"{info['시작']} ~ {info['종료']}")
         i4.metric("노출기간", f"{info['노출기간']}일")
         if info.get("신규시드") or info.get("신규자립") or info.get("신규_유사품없음"):
@@ -334,6 +340,19 @@ if st.button("🔄 최근 12개월로 재계산", type="primary"):
                 msg += f" · ⚠️ 유사품 이력없음 {len(info['신규_유사품없음'])}건({', '.join(info['신규_유사품없음'][:5])})"
             st.info(msg)
         st.dataframe(df, width="stretch", height=460)
+
+        # 계절(월별) 프로파일 뷰어
+        with st.expander("📅 계절(월별) 프로파일 보기 — 성수기↑ 비수기↓ 반영 확인"):
+            sel = st.selectbox("품목 선택", [r["품목코드"] for r in rows],
+                               format_func=lambda c: f"{c}  {by[c]['품목명'][:26]}")
+            mp = by[sel].get("months") or {}
+            mdf = pd.DataFrame([{"월": f"{m}월", "일평균": mp.get(m, {}).get("rate"),
+                                 "안전재고": mp.get(m, {}).get("ss"),
+                                 "Min": mp.get(m, {}).get("mn"),
+                                 "Max": mp.get(m, {}).get("mx")} for m in range(1, 13)])
+            st.dataframe(mdf, width="stretch", hide_index=True)
+            st.caption(f"연 고정: SS {by[sel]['안전재고_EA']} · Max {by[sel]['Max(목표재고,EA)']} "
+                       "(참고). 이동계획은 계획일자의 **그 달** 값을 사용합니다.")
 
         # 엑셀 다운로드
         buf = io.BytesIO()
@@ -345,7 +364,7 @@ if st.button("🔄 최근 12개월로 재계산", type="primary"):
                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                            width="stretch")
         if sv.button("✅ 이 기준을 재고이동계획에 적용", type="secondary", width="stretch"):
-            ok = store.save_baseline(rows, settings)
-            st.success("재고이동계획 기준으로 저장됨" + (" (Supabase)" if ok else " (로컬 시드)"))
-        st.caption("이 표의 안전재고·Min·Max가 재고이동계획의 기준으로 쓰입니다. "
+            ok = store.save_baseline(res["rows"], res["settings"])
+            st.success("재고이동계획 기준으로 저장됨(계절 월별 포함)" + (" (Supabase)" if ok else " (로컬 시드)"))
+        st.caption("안전재고·Min·Max는 **계절(월별)** 로 저장됩니다. 이동계획은 계획일자 달의 값을 사용. "
                    "딜(행사)은 제외된 평상시 기준이며, 딜 물량은 이동계획의 이벤트/행사일정으로 별도 반영합니다.")

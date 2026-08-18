@@ -112,6 +112,54 @@ def _ss_row(code, ip, plt, nm, cat, rate, sigma, z, lead, batch,
     }
 
 
+def _exposure_windows(dv, exp):
+    """(date, value) 정렬 리스트에서 달력상 연속한 exp일 창합계만 생성.
+    달력 간격 >7일(연 경계 등)이면 창을 잇지 않음(잘못된 합 방지)."""
+    wins = []
+    n = len(dv)
+    for i in range(n):
+        seg = [dv[i][1]]
+        ok = True
+        for k in range(1, exp):
+            if i + k >= n or (dv[i + k][0] - dv[i + k - 1][0]).days > 7:
+                ok = False
+                break
+            seg.append(dv[i + k][1])
+        if ok and len(seg) == exp:
+            wins.append(sum(seg))
+    return wins
+
+
+def _monthly_profile(hist_item, dates, ip, z, lead, batch, exp):
+    """달력월(1~12)별 {rate, ss, mn, mx} 프로파일. 그 달 날들로 직접 산출.
+    비수기(수요0)는 0. 같은 달이 여러 해 있으면 함께 풀링(달력 연속만 창 구성)."""
+    ip = ip or 1
+    by_m = {}
+    for d in dates:
+        by_m.setdefault(int(d[5:7]), []).append(d)
+    prof = {}
+    for m in range(1, 13):
+        dd = by_m.get(m)
+        if not dd:
+            prof[m] = {"rate": 0, "ss": 0, "mn": 0, "mx": 0}
+            continue
+        ser = [max(0.0, (hist_item[d][0] - hist_item[d][1])) if d in hist_item else 0.0
+               for d in dd]
+        tot = sum(ser)
+        if tot <= 0:
+            prof[m] = {"rate": 0, "ss": 0, "mn": 0, "mx": 0}
+            continue
+        rate = tot / len(dd)
+        dv = [(date.fromisoformat(dd[i]), ser[i]) for i in range(len(dd))]
+        win = _exposure_windows(dv, exp)
+        sigma = _sd(win) if win else 0.0
+        ss = max(ip, math.ceil(z * sigma / ip) * ip)
+        mn = math.ceil(rate * lead + ss)
+        mx = max(math.ceil((mn + rate * batch) / ip), math.ceil((mn + 1) / ip)) * ip
+        prof[m] = {"rate": round(rate, 1), "ss": ss, "mn": mn, "mx": mx}
+    return prof
+
+
 def compute(history, master, settings=None, uplift=None, new_items=None):
     """안전재고 산출표(품목별 dict 리스트) 반환.
 
@@ -184,6 +232,16 @@ def compute(history, master, settings=None, uplift=None, new_items=None):
                             an_stx[0] * f, an_stx[1] * f, z, lead, batch, 0,
                             note_extra=f"신규(유사 {reg['analog']}×{round(f,2)})"))
         n_seed += 1
+
+    # 월별(계절) 프로파일 부착 — 이력 있으면 월별 산출, 없으면(신규 시드) 연값 평탄화
+    for r in rows:
+        hi = history.get(r["품목코드"])
+        if hi:
+            r["months"] = _monthly_profile(hi, dates, r["입수"], z, lead, batch, exp)
+        else:
+            v = {"rate": r["일평균(딜제외)"], "ss": r["안전재고_EA"],
+                 "mn": r["Min(발주점,EA)"], "mx": r["Max(목표재고,EA)"]}
+            r["months"] = {m: dict(v) for m in range(1, 13)}
 
     rows.sort(key=lambda r: -r["초기이관_EA"])
     return rows, {"기간일수": ndays,

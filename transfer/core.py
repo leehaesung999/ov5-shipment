@@ -21,8 +21,20 @@ import math
 INF = 9e15
 
 
+def _season(b, plan_month):
+    """계획월의 계절 프로파일(mn,mx,ss) 반환. months 없으면 연 고정값 폴백.
+    months 키는 JSON 저장으로 문자열('1'~'12')일 수 있어 양쪽 조회."""
+    if plan_month:
+        mp = b.get("months")
+        if mp:
+            mm = mp.get(str(plan_month)) or mp.get(plan_month)
+            if mm:
+                return mm.get("mn"), mm.get("mx"), mm.get("ss")
+    return b.get("mn"), b.get("mx"), b.get("ss")
+
+
 def compute_transfer(baseline, stock, avail=None, incoming=None,
-                     events=None, ended=None):
+                     events=None, ended=None, plan_month=None):
     stock = stock or {}
     incoming = incoming or {}
     events = events or {}
@@ -31,7 +43,7 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
     for code, b in baseline.items():
         ip = b.get("ip") or 1
         plt = b.get("plt")
-        mn, mx = b.get("mn"), b.get("mx")
+        mn, mx, ss_m = _season(b, plan_month)   # 계절(계획월) 기준
         s = stock.get(code, {})
         cur = s.get("cur")
         alloc = s.get("alloc")
@@ -77,7 +89,7 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
 
         rows.append(_row(code, b, ip, plt, cur, mn, mx, 요청_박스, evt, inc,
                          (None if av_box >= INF else av_box), alloc,
-                         이동가능_박스, 이동_박스, 미충족_박스, 사유))
+                         이동가능_박스, 이동_박스, 미충족_박스, 사유, ss_eff=ss_m))
     # 정렬: 종료 최하 → 미충족 → 이벤트 → 발주점미달 → 나머지 → 미입력 최하
     order = {"할당제한": 0, "출고가능제한": 0, "발주점미달+이벤트": 1, "발주점미달": 2,
              "이벤트": 3, "충분": 8, "종료(제외)": 9, "미입력": 9}
@@ -87,12 +99,13 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
 
 
 def _row(code, b, ip, plt, cur, mn, mx, req, evt, inc, av, alloc, movable,
-         move_box, short_box, reason):
+         move_box, short_box, reason, ss_eff=None):
     move_ea = (move_box * ip) if move_box else 0
     # 소진경고: 현재고가 안전재고(SS) 밑으로 = 예상보다 빨리 소진(행사 초과 등).
     #   보충은 매일 Max까지 따라가지만, 리드타임(수일) 동안은 SS가 완충. SS를
     #   이미 까먹었다면 리드타임 내 결품 위험 → 사람이 확인하라는 신호(공급 로직은 불변).
-    ss = b.get("ss") or 0
+    #   ss_eff = 계획월의 계절 SS(있으면), 없으면 연 고정 SS.
+    ss = ss_eff if ss_eff is not None else (b.get("ss") or 0)
     if cur is None or reason == "종료(제외)":
         warn = ""
     elif cur <= 0:
