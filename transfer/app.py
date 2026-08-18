@@ -235,11 +235,15 @@ def _pallet_xlsx(rows, plan_d, only_wh=None):
 st.subheader("1️⃣ 입력 (재고 필수, 나머지 선택)")
 up_stock = st.file_uploader("재고입력 (BNF 상품별재고현황 .xls 그대로 OK / 또는 코드·현재고·할당)",
                             type=["xlsx", "xls"], key="t_stock")
-with st.expander("추가 입력 (출고가능·입고예정·종료·로케이션재고)"):
+up_loc = st.file_uploader("🏬 로케이션별 재고조회 (우리 창고 IC930/920/100) — 창고배정 + 이동량 상한",
+                          type=["xlsx"], key="t_loc")
+cap_by_loc = st.checkbox("창고 재고로 이동량 제한 (있는 만큼만 보냄)", value=True,
+                         help="로케이션(우리 창고) 재고 합계를 이동량 상한으로 사용. "
+                              "창고에 없는 품목은 이동 0, 부족분은 '창고재고부족'으로 표시.")
+with st.expander("추가 입력 (출고가능·입고예정·종료)"):
     up_avail = st.file_uploader("출고가능재고 (WMS export)", type=["xlsx"], key="t_avail")
     up_inc = st.file_uploader("입고예정", type=["xlsx"], key="t_inc")
     up_end = st.file_uploader("종료품목 (A:CJ코드)", type=["xlsx"], key="t_end")
-    up_loc = st.file_uploader("로케이션별 재고조회 (창고 배정용, IC930/920/100)", type=["xlsx"], key="t_loc")
 
 st.subheader("2️⃣ 행사 이벤트 (선택)")
 up_evt = st.file_uploader("행사양식 xlsx 업로드 — 신규(미반영)만 자동 반영", type=["xlsx"], key="t_evt")
@@ -250,7 +254,6 @@ st.caption("header_id로 중복 판정. 현행(current_flag=Y)·안 지난 행�
 if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is None):
     try:
         stock = parse_stock(up_stock)
-        avail = parse_avail(up_avail) if up_avail else None
         incoming = parse_incoming(up_inc) if up_inc else {}
         ended = parse_ended(up_end) if up_end else set()
         events, new_ids, estat = {}, set(), {}
@@ -258,10 +261,25 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
             reflected = store.load_reflected_events()
             events, new_ids, estat = parse_events_new(up_evt, plan_date, reflected)
 
+        # 이동량 상한(avail): 출고가능재고 파일 ∩ 로케이션(우리 창고) 합계. 둘 다면 더 작은 값.
+        loc_inv = parse_location(up_loc, T.WH_SOURCES) if up_loc else None
+        sources = []
+        if up_avail:
+            sources.append(parse_avail(up_avail))
+        if loc_inv and cap_by_loc:
+            sources.append({c: int(sum((w.get("avail") or 0) for w in whs.values()))
+                            for c, whs in loc_inv.items()})
+        avail = None
+        if sources:
+            avail = {}
+            for c in set().union(*[set(s) for s in sources]):
+                vals = [s[c] for s in sources if c in s]
+                avail[c] = min(vals) if vals else 0
+        cap_reason = "창고재고부족" if (loc_inv and cap_by_loc) else "출고가능제한"
+
         rows = T.compute_transfer(baseline, stock, avail, incoming, events, ended,
-                                  plan_month=plan_date.month)   # 계절(계획월) 기준
-        if up_loc:                              # 창고 배정(로케이션재고)
-            loc_inv = parse_location(up_loc, T.WH_SOURCES)
+                                  plan_month=plan_date.month, cap_reason=cap_reason)
+        if loc_inv:                              # 창고 배정(로케이션재고)
             T.allocate_warehouse(rows, loc_inv)
         df = pd.DataFrame(rows)
         buf = io.BytesIO()
@@ -298,8 +316,21 @@ if res:
     m[0].metric("이동 품목", f"{summ['이동품목수']:,}")
     m[1].metric("총 이동_박스", f"{summ['총이동_박스']:,}")
     m[2].metric("총 파레트", f"{summ['총파레트']}")
-    m[3].metric("가용부족", f"{summ['가용부족']}")
+    m[3].metric("가용부족(창고부족 포함)", f"{summ['가용부족']}")
     m[4].metric("결품/안전재고이하", f"{summ.get('결품',0)}/{summ.get('안전재고이하',0)}")
+
+    # 창고재고부족: 요청보다 우리 창고 재고가 모자라 다 못 보낸 품목
+    short_rows = [r for r in df.to_dict("records") if r.get("사유") == "창고재고부족"]
+    if short_rows:
+        with st.expander(f"🏬 창고재고부족 {len(short_rows)}품목 — 요청보다 창고 재고가 모자람(있는 만큼만 이동)",
+                         expanded=True):
+            st.caption("우리 창고(IC930/920/100)에 있는 만큼만 이동에 반영했습니다. "
+                       "부족분(미충족)은 창고 입고 후 다음 계획에 잡힙니다.")
+            sdf = pd.DataFrame([{"품목코드": r["품목코드"], "품목명": r["품목명"],
+                                 "요청_박스": r["요청_박스"], "이동_박스": r["★이동_박스"],
+                                 "미충족_박스": r["미충족_박스"], "창고재고": r.get("창고재고", "")}
+                                for r in short_rows])
+            st.dataframe(sdf, width="stretch", hide_index=True)
 
     # 미등록 신규품목 (재고엔 있는데 안전재고 기준 없음 → 계획 누락)
     unreg = res.get("unreg") or []

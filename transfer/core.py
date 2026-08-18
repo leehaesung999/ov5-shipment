@@ -34,7 +34,11 @@ def _season(b, plan_month):
 
 
 def compute_transfer(baseline, stock, avail=None, incoming=None,
-                     events=None, ended=None, plan_month=None):
+                     events=None, ended=None, plan_month=None,
+                     cap_reason="출고가능제한"):
+    """avail = 보낼 수 있는 상한(Box) {코드:박스}. 로케이션(우리 창고) 합계를 넘기면
+    창고에 있는 만큼만 이동. avail에 없는 코드는 0(=창고재고 없음→이동0).
+    cap_reason: avail 제한으로 못 채울 때의 사유(창고재고면 '창고재고부족')."""
     stock = stock or {}
     incoming = incoming or {}
     events = events or {}
@@ -77,7 +81,7 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
         if is_end:
             사유 = "종료(제외)"
         elif 이동_박스 < 요청_박스:
-            사유 = "할당제한" if al_box <= av_box else "출고가능제한"
+            사유 = "할당제한" if al_box <= av_box else cap_reason
         elif 정상보충 > 0 and evt > 0:
             사유 = "발주점미달+이벤트"
         elif evt > 0:
@@ -91,8 +95,8 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
                          (None if av_box >= INF else av_box), alloc,
                          이동가능_박스, 이동_박스, 미충족_박스, 사유, ss_eff=ss_m))
     # 정렬: 종료 최하 → 미충족 → 이벤트 → 발주점미달 → 나머지 → 미입력 최하
-    order = {"할당제한": 0, "출고가능제한": 0, "발주점미달+이벤트": 1, "발주점미달": 2,
-             "이벤트": 3, "충분": 8, "종료(제외)": 9, "미입력": 9}
+    order = {"할당제한": 0, "출고가능제한": 0, "창고재고부족": 0, "발주점미달+이벤트": 1,
+             "발주점미달": 2, "이벤트": 3, "충분": 8, "종료(제외)": 9, "미입력": 9}
     rows.sort(key=lambda r: (order.get(r["사유"], 5),
                              -(r["★이동_박스"] if isinstance(r["★이동_박스"], (int, float)) else 0)))
     return rows
@@ -197,7 +201,8 @@ def summarize(rows):
         "총이동_EA": sum(r["이동_EA"] for r in mv),
         "총파레트": round(sum((r["파레트환산"] or 0) for r in mv), 1),
         "미입력": sum(1 for r in rows if r["사유"] == "미입력"),
-        "가용부족": sum(1 for r in rows if r["사유"] in ("할당제한", "출고가능제한")),
+        "가용부족": sum(1 for r in rows if r["사유"] in ("할당제한", "출고가능제한", "창고재고부족")),
+        "창고재고부족": sum(1 for r in rows if r["사유"] == "창고재고부족"),
         "종료제외": sum(1 for r in rows if r["사유"] == "종료(제외)"),
         "분할필요": sum(1 for r in rows if r.get("배정창고") == "분할필요"),
         "창고재고없음": sum(1 for r in rows if r.get("배정창고") == "재고없음"),
