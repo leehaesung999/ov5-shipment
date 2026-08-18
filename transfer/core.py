@@ -3,7 +3,7 @@
 
 이동_박스 = MIN( 요청, 출고가능, 할당 ) 을 박스단위로. 종료품목은 0.
   · 요청_박스   = ROUNDUP( MAX(정상보충 + 이벤트 - 입고예정, 0) / 입수 )
-  · 정상보충    = 현재고 ≤ Min 이면 (Max - 현재고), 아니면 0
+  · 정상보충    = 현재고 < 안전재고(SS) 이면 (Max - 현재고), 아니면 0  (==SS면 발주 안 함)
   · 이동가능_박스 = MIN( 출고가능_박스, 내림(할당/입수) )
   · 파레트환산   = 이동_박스 / 하대박스수
 
@@ -60,7 +60,9 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
                              None, alloc, None, 0, 0, "미입력"))
             continue
 
-        정상보충 = max(mx - cur, 0) if cur <= mn else 0
+        # 발주점 = 안전재고(SS). 현재고 < SS 일 때만 발주(현재고==SS면 발주 안 함).
+        ss_re = ss_m or 0
+        정상보충 = max(mx - cur, 0) if cur < ss_re else 0
         요청_박스 = math.ceil(max(정상보충 + evt - inc, 0) / ip)
 
         # 출고가능_박스: avail None=무제한 / dict에 없으면 0
@@ -83,20 +85,20 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
         elif 이동_박스 < 요청_박스:
             사유 = "할당제한" if al_box <= av_box else cap_reason
         elif 정상보충 > 0 and evt > 0:
-            사유 = "발주점미달+이벤트"
+            사유 = "안전재고미달+이벤트"
         elif evt > 0:
             사유 = "이벤트"
         elif 정상보충 > 0:
-            사유 = "발주점미달"
+            사유 = "안전재고미달"
         else:
             사유 = "충분"
 
         rows.append(_row(code, b, ip, plt, cur, mn, mx, 요청_박스, evt, inc,
                          (None if av_box >= INF else av_box), alloc,
                          이동가능_박스, 이동_박스, 미충족_박스, 사유, ss_eff=ss_m))
-    # 정렬: 종료 최하 → 미충족 → 이벤트 → 발주점미달 → 나머지 → 미입력 최하
-    order = {"할당제한": 0, "출고가능제한": 0, "창고재고부족": 0, "발주점미달+이벤트": 1,
-             "발주점미달": 2, "이벤트": 3, "충분": 8, "종료(제외)": 9, "미입력": 9}
+    # 정렬: 종료 최하 → 미충족 → 이벤트 → 안전재고미달 → 나머지 → 미입력 최하
+    order = {"할당제한": 0, "출고가능제한": 0, "창고재고부족": 0, "안전재고미달+이벤트": 1,
+             "안전재고미달": 2, "이벤트": 3, "충분": 8, "종료(제외)": 9, "미입력": 9}
     rows.sort(key=lambda r: (order.get(r["사유"], 5),
                              -(r["★이동_박스"] if isinstance(r["★이동_박스"], (int, float)) else 0)))
     return rows
@@ -123,6 +125,7 @@ def _row(code, b, ip, plt, cur, mn, mx, req, evt, inc, av, alloc, movable,
         "품목명": b.get("nm", ""),
         "입수": ip,
         "현재고": cur,
+        "안전재고": ss,
         "Min": mn,
         "Max": mx,
         "이벤트": evt or "",
