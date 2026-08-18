@@ -889,8 +889,7 @@ except Exception:
 st.title('📦 BNF(비네이버) 피킹지 표식지')
 st.caption('입고예정 Excel을 업로드하면 파레트 단위로 자동 구분합니다.')
 
-with st.sidebar:
-    st.header('🎛 기준값 설정')
+with st.expander('🎛 피킹 기준값 설정 (박스 분류·파레트 상한)', expanded=False):
     st.caption('변경하면 즉시 재계산됩니다.')
 
     if st.button('🔄 기본값으로 되돌리기', use_container_width=True):
@@ -945,16 +944,10 @@ with st.sidebar:
 **절대 기준**: 한 파레트 내 Plt_1차 합 ≤ {cfg['plt_sum_max']:.2f}
 """)
 
-    st.divider()
-    st.header('📤 출력 형식')
-    output_mode = st.radio(
-        '출력 형식 선택',
-        ['기본 (입고정보 시트)', 'FCJ 양식 (파레트별 시트)'],
-        index=0,
-        label_visibility='collapsed',
-    )
+output_mode = 'FCJ 양식 (파레트별 시트)'   # FCJ 고정(기본 양식 제거)
 
-    fcj_header = None
+fcj_header = None
+with st.expander('📤 출력 정보 · 마스터 (FCJ)', expanded=True):
     if output_mode.startswith('FCJ'):
         st.markdown('**입고 정보 입력**')
         st.caption('화주명·시간은 고정값(샘표식품 / 09:00)으로 채워집니다.')
@@ -1072,7 +1065,7 @@ with st.sidebar:
         expiry_master = st.session_state.get('expiry_master', EMPTY_EXPIRY_MASTER)
 
     st.divider()
-    st.caption('비고·순번 컬럼은 기본 출력에서 비워둡니다. 필요 시 결과 파일에서 직접 입력하세요.')
+    st.caption('출력은 FCJ 양식(파레트별 시트) 고정입니다.')
 
 uploaded = st.file_uploader('입고예정 Excel 파일 (.xlsx)', type=['xlsx'])
 
