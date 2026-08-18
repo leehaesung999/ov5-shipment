@@ -993,73 +993,6 @@ with st.expander('📤 출력 정보 · 마스터 (FCJ)', expanded=True):
             except Exception as e:
                 st.error(f'마스터 파싱 실패: {e}')
 
-        st.divider()
-        st.markdown('**📅 유통기한 마스터** (매번 새로 업로드)')
-        st.caption('출고진행 현황 조회')
-        expiry_master = st.session_state.get('expiry_master', EMPTY_EXPIRY_MASTER)
-        if expiry_master.get('count'):
-            st.success(
-                f"이번 세션 등록: {expiry_master['count']:,}개 품목 "
-                f"({expiry_master.get('source_name','-')})"
-            )
-            st.caption(f"업로드 시각: {expiry_master.get('updated_at','-')}")
-            dup_saved = expiry_master.get('duplicates', {})
-            if dup_saved:
-                st.caption(f"⚠️ 유통기한 2개 이상: {len(dup_saved)}개 품목 (가장 나중 것 사용)")
-        else:
-            st.info('💡 유통기한 마스터는 자동 저장되지 않으니 매번 새로 업로드해주세요.')
-
-        new_expiry = st.file_uploader(
-            '마스터 엑셀 업로드(품목코드 + 유통기한 컬럼)', type=['xlsx', 'xls'],
-            key='expiry_uploader',
-            help='헤더에 "품목코드"와 "유통기한"(또는 소비기한) 컬럼이 있으면 자동 인식됩니다. '
-                 '같은 품목코드에 여러 유통기한이 있으면 가장 늦은 것을 사용합니다. '
-                 '페이지 새로고침/앱 재시작 시 사라지므로 매번 업로드해주세요.',
-        )
-        if new_expiry is not None:
-            try:
-                flat_max, by_inv, inventories, dups, hr, cc, ec, inv_col, skipped = \
-                    parse_expiry_master(new_expiry)
-                if not flat_max:
-                    st.error('매핑 데이터가 비어있습니다. 파일 내용을 확인해주세요.')
-                else:
-                    saved = {
-                        'mapping': flat_max,
-                        'by_inv': by_inv,
-                        'inventories': inventories,
-                        'duplicates': dups,
-                        'count': len(flat_max),
-                        'source_name': new_expiry.name,
-                        'updated_at': _now_kst().strftime('%Y-%m-%d %H:%M:%S'),
-                    }
-                    st.session_state.expiry_master = saved
-                    expiry_master = saved
-                    # 마스터가 갱신되면 매칭 결과도 재계산되도록 시그너처 무효화
-                    st.session_state.pop('expiry_match_sig', None)
-                    inv_msg = f', 인벤토리 {inv_col}열' if inv_col else ' (인벤토리 컬럼 없음)'
-                    msg = (f'✅ 유통기한 마스터 등록 완료: {saved["count"]:,}개 품목 '
-                           f'(헤더 {hr}행, 코드 {cc}열, 유통기한 {ec}열{inv_msg})')
-                    if skipped:
-                        msg += f' | 날짜 형식 인식 실패 {skipped}건 스킵'
-                    st.success(msg)
-                    if inventories and inventories != [NO_INVENTORY]:
-                        st.caption(f'📦 보유 인벤토리: {len(inventories)}종 — '
-                                   + ', '.join(inventories[:8])
-                                   + (' …' if len(inventories) > 8 else ''))
-                    if dups:
-                        st.warning(f'⚠️ 인벤토리가 2개 이상인 품목: {len(dups)}개 (기본값 IC930, 사용자 변경 가능)')
-                        with st.expander(f'중복 품목코드 보기 ({len(dups)}개)'):
-                            dup_rows = []
-                            for code, inv_exp_pairs in sorted(dups.items()):
-                                dup_rows.append({
-                                    '품목코드': code,
-                                    '인벤토리 수': len(inv_exp_pairs),
-                                    '인벤토리별 유통기한': ', '.join(f'{i}={e}' for i, e in inv_exp_pairs),
-                                })
-                            st.dataframe(pd.DataFrame(dup_rows),
-                                         hide_index=True, use_container_width=True)
-            except Exception as e:
-                st.error(f'유통기한 마스터 파싱 실패: {e}')
     else:
         master = load_master()
         expiry_master = st.session_state.get('expiry_master', EMPTY_EXPIRY_MASTER)
@@ -1067,7 +1000,73 @@ with st.expander('📤 출력 정보 · 마스터 (FCJ)', expanded=True):
     st.divider()
     st.caption('출력은 FCJ 양식(파레트별 시트) 고정입니다.')
 
-uploaded = st.file_uploader('입고예정 Excel 파일 (.xlsx)', type=['xlsx'])
+# ---------- 📅 유통기한 마스터(출고진행현황) — 본화면(잊지 않도록 밖으로) ----------
+st.markdown('#### 📅 유통기한 매칭용 · 출고진행현황 업로드')
+expiry_master = st.session_state.get('expiry_master', EMPTY_EXPIRY_MASTER)
+if expiry_master.get('count'):
+    st.success(f"등록됨: {expiry_master['count']:,}개 품목 "
+               f"({expiry_master.get('source_name','-')} · {expiry_master.get('updated_at','-')})")
+    dup_saved = expiry_master.get('duplicates', {})
+    if dup_saved:
+        st.caption(f"⚠️ 유통기한 2개 이상: {len(dup_saved)}개 품목 (가장 나중 것 사용)")
+else:
+    st.info('💡 출고진행현황(유통기한)을 올리면 파레트별 유통기한이 자동 매칭됩니다. '
+            '자동 저장되지 않으니 매번 새로 업로드해주세요.')
+
+new_expiry = st.file_uploader(
+    '출고진행현황(유통기한) 엑셀 — 품목코드 + 유통기한 컬럼', type=['xlsx', 'xls'],
+    key='expiry_uploader',
+    help='헤더에 "품목코드"와 "유통기한"(또는 소비기한) 컬럼이 있으면 자동 인식됩니다. '
+         '같은 품목코드에 여러 유통기한이 있으면 가장 늦은 것을 사용합니다. '
+         '페이지 새로고침/앱 재시작 시 사라지므로 매번 업로드해주세요.',
+)
+if new_expiry is not None:
+    try:
+        flat_max, by_inv, inventories, dups, hr, cc, ec, inv_col, skipped = \
+            parse_expiry_master(new_expiry)
+        if not flat_max:
+            st.error('매핑 데이터가 비어있습니다. 파일 내용을 확인해주세요.')
+        else:
+            saved = {
+                'mapping': flat_max,
+                'by_inv': by_inv,
+                'inventories': inventories,
+                'duplicates': dups,
+                'count': len(flat_max),
+                'source_name': new_expiry.name,
+                'updated_at': _now_kst().strftime('%Y-%m-%d %H:%M:%S'),
+            }
+            st.session_state.expiry_master = saved
+            expiry_master = saved
+            st.session_state.pop('expiry_match_sig', None)   # 매칭 재계산 유도
+            inv_msg = f', 인벤토리 {inv_col}열' if inv_col else ' (인벤토리 컬럼 없음)'
+            msg = (f'✅ 유통기한 마스터 등록 완료: {saved["count"]:,}개 품목 '
+                   f'(헤더 {hr}행, 코드 {cc}열, 유통기한 {ec}열{inv_msg})')
+            if skipped:
+                msg += f' | 날짜 형식 인식 실패 {skipped}건 스킵'
+            st.success(msg)
+            if inventories and inventories != [NO_INVENTORY]:
+                st.caption(f'📦 보유 인벤토리: {len(inventories)}종 — '
+                           + ', '.join(inventories[:8])
+                           + (' …' if len(inventories) > 8 else ''))
+            if dups:
+                st.warning(f'⚠️ 인벤토리가 2개 이상인 품목: {len(dups)}개 (기본값 IC930, 사용자 변경 가능)')
+                with st.expander(f'중복 품목코드 보기 ({len(dups)}개)'):
+                    dup_rows = []
+                    for code, inv_exp_pairs in sorted(dups.items()):
+                        dup_rows.append({
+                            '품목코드': code,
+                            '인벤토리 수': len(inv_exp_pairs),
+                            '인벤토리별 유통기한': ', '.join(f'{i}={e}' for i, e in inv_exp_pairs),
+                        })
+                    st.dataframe(pd.DataFrame(dup_rows),
+                                 hide_index=True, use_container_width=True)
+    except Exception as e:
+        st.error(f'유통기한 마스터 파싱 실패: {e}')
+
+st.markdown('#### 📦 입고예정(파레트 입력) 업로드')
+uploaded = st.file_uploader('입고예정 Excel 파일 (.xlsx) — 재고이동 계획의 파레트 입력 파일',
+                            type=['xlsx'])
 
 if not uploaded:
     st.info('파일을 업로드하면 자동으로 분석됩니다.')
@@ -1280,8 +1279,7 @@ if output_mode.startswith('FCJ'):
         st.caption(f"마스터: {expiry_master['count']:,}개 품목 등록됨 "
                    f"(갱신 {expiry_master.get('updated_at','-')})")
     else:
-        st.info('위쪽 **📤 출력 정보 · 마스터 (FCJ)** 안의 **📅 유통기한 마스터(출고진행현황)**에 '
-                '엑셀을 업로드하면 자동 매칭됩니다. '
+        st.info('위쪽 **📅 유통기한 매칭용 · 출고진행현황 업로드**에 엑셀을 올리면 자동 매칭됩니다. '
                 '마스터가 없어도 입력 엑셀의 소비기한이나 직접 입력으로 채울 수 있습니다.')
 
     # 이번 입고 품목(중복 코드 1줄로 통합)
