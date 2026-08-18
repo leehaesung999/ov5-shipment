@@ -7,6 +7,7 @@
   · 결과: 품목별 안전재고·Min·Max·파레트 → 엑셀 다운로드
 """
 import io
+import re
 import sys
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
@@ -102,6 +103,24 @@ def _stock_codes(file) -> dict:
                 cur = None
         out[c] = cur
     return out
+
+
+def _name_toks(s):
+    """이름을 의미토큰으로(2자↑, 숫자·용량 제외). 브랜드·제품군 매칭용."""
+    return [t for t in re.split(r"[\s/()·,\-_]+", str(s or ""))
+            if len(t) >= 2 and not any(ch.isdigit() for ch in t)]
+
+
+def _name_sim(a, b):
+    """이름 유사도 점수(공유 토큰 수 + 첫 토큰(브랜드) 가중)."""
+    ta = _name_toks(a)
+    sb = set(_name_toks(b))
+    if not ta or not sb:
+        return 0
+    score = sum(1 for t in ta if t in sb)
+    if ta[0] in sb:
+        score += 2
+    return score
 
 
 KST = timezone(timedelta(hours=9))
@@ -210,18 +229,38 @@ with st.expander(f"🆕 신규품목 초기기준 (유사품 기반) — 등록 
             if not cand:
                 st.success("재고파일에 미등록 신규품목이 없습니다 (모두 기준 보유).")
             else:
-                an_opts = ["(선택 안함)"] + [
-                    f"{c} {master.get(str(c), {}).get('nm', '')}".strip()
-                    for c in sorted(history)]
+                # 후보 품명·입수·하대를 허브에서 보강(품명미상 방지 — 신규코드는 master에 아직 없음)
+                try:
+                    _hip, _hha, _hnm = hub.ipsu_map(), hub.hadae_map(), hub.name_map()
+                except Exception:
+                    _hip = _hha = _hnm = {}
+                for c in cand:
+                    if not c.isdigit():
+                        continue
+                    ci = int(c)
+                    mm = dict(master.get(c) or {})
+                    if not mm.get("nm") and _hnm.get(ci):
+                        mm["nm"] = _hnm[ci]
+                    if not mm.get("ip") and _hip.get(ci):
+                        mm["ip"] = int(_hip[ci])
+                    if not mm.get("plt") and _hha.get(ci):
+                        mm["plt"] = int(_hha[ci])
+                    if mm:
+                        master[c] = mm
+                hist_names = {h: master.get(h, {}).get("nm", "") for h in history}
                 st.caption(f"{len(cand)}개 후보 — **유사품과 계수만** 정하면 됩니다. "
-                           "입수·품명은 허브값을 자동 사용합니다.")
+                           "입수·품명은 허브값 자동. 유사품은 **이름 비슷한 순**으로 정렬됩니다(입력해 검색도 가능).")
                 with st.form("ni_bulk", clear_on_submit=True):
                     picks = {}
                     for c in cand:
                         m = master.get(c, {})
+                        cnm = m.get("nm") or ""
+                        # 유사품 옵션을 후보 이름과 유사한 순으로 정렬
+                        ranked = sorted(history, key=lambda h: (-_name_sim(cnm, hist_names[h]), h))
+                        an_opts = ["(선택 안함)"] + [f"{h} {hist_names[h]}".strip() for h in ranked]
                         cc = st.columns([1, 2, 2, 1])
                         cc[0].markdown(f"`{c}`")
-                        cc[1].markdown(f"{m.get('nm') or '(품명 미상)'} · 입수 {m.get('ip') or '?'}")
+                        cc[1].markdown(f"{cnm or '(품명 미상)'} · 입수 {m.get('ip') or '?'}")
                         an = cc[2].selectbox("유사품", an_opts, key=f"ni_an_{c}",
                                              label_visibility="collapsed")
                         fac = cc[3].number_input("계수", 0.1, 5.0, 1.0, 0.1,
