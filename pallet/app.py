@@ -167,22 +167,91 @@ def extract_title(ws):
     return None, ''
 
 
+def _norm_code(v):
+    if v is None:
+        return None
+    if isinstance(v, float):
+        return str(int(v))
+    s = str(v).strip()
+    return s[:-2] if s.endswith('.0') else s
+
+
 def extract_items(ws, header_row):
+    """헤더명으로 컬럼 인식 + 빠진 값(품명·입수·하대)은 공용 허브에서 자동 보강.
+    → 파레트 구분기 형식(Item/입수/박스/plt환산/Plt_1차)과
+      WMS 템플릿(Item Code·BOX) 둘 다 지원. 하대 없으면 파레트 그룹핑이 안 되므로 보강 필수."""
+    cmap = {str(ws.cell(header_row, c).value).strip().lower(): c
+            for c in range(1, ws.max_column + 1) if ws.cell(header_row, c).value is not None}
+
+    def col(names, default=None):
+        for n in names:
+            if n in cmap:
+                return cmap[n]
+        return default
+    # 헤더명 우선. 없으면(WMS 최소양식) name/입수/하대는 None→허브에서 보강.
+    c_code = col(['item code', 'itemcode', '품목코드', '상품코드'], 1)
+    c_name = col(['item', '품목명', '상품명'])
+    c_ipsu = col(['입수'])
+    c_box = col(['박스', 'box'], 4)
+    c_qty = col(['낱개', 'ea'])
+    c_exp = col(['소비기한', '유통기한'])
+    c_pltc = col(['plt환산', '하대박스수', '하대'])
+    c_plt1 = col(['plt_1차', '파레트환산'])
+
+    _hub = {}
+
+    def hubmaps():
+        if not _hub:
+            try:
+                from master_hub import store as hub
+                _hub['hha'] = hub.hadae_map(); _hub['hnm'] = hub.name_map()
+                _hub['hip'] = hub.ipsu_map()
+            except Exception:
+                _hub['hha'] = _hub['hnm'] = _hub['hip'] = {}
+        return _hub
+
     items = []
     for r in range(header_row + 1, ws.max_row + 1):
-        row = [ws.cell(r, c).value for c in range(1, 12)]
-        if row[0] is None:
+        raw = ws.cell(r, c_code).value
+        if raw is None:
             continue
+        code = _norm_code(raw)
+        try:
+            ci = int(float(raw))
+        except (TypeError, ValueError):
+            ci = None
+
+        def g(c):
+            return ws.cell(r, c).value if c else None
+        try:
+            box = int(g(c_box)) if g(c_box) is not None else 0
+        except (TypeError, ValueError):
+            box = 0
+        name = g(c_name); ipsu = g(c_ipsu); plt_conv = g(c_pltc); plt1 = g(c_plt1)
+        expiry = g(c_exp); qty = g(c_qty)
+        # 빠진 값은 허브에서 보강(WMS 템플릿 등 최소양식 대응)
+        if (not name or ipsu is None or not plt_conv) and ci is not None:
+            hm = hubmaps()
+            if not name:
+                name = hm['hnm'].get(ci)
+            if ipsu is None:
+                ipsu = hm['hip'].get(ci)
+            if not plt_conv:
+                plt_conv = hm['hha'].get(ci)
+        if plt1 is None and plt_conv:
+            plt1 = round(box / plt_conv, 4) if plt_conv else 0.0
+        if qty is None and ipsu:
+            qty = box * ipsu
         try:
             items.append({
-                'item_code': row[0],
-                'name': row[1],
-                'ipsu': row[2],
-                'box': int(row[3]) if row[3] is not None else 0,
-                'qty': row[4],
-                'expiry': row[5],
-                'plt_conv': row[6],
-                'plt1': float(row[7]) if row[7] is not None else 0.0,
+                'item_code': code,
+                'name': name,
+                'ipsu': ipsu,
+                'box': box,
+                'qty': qty,
+                'expiry': expiry,
+                'plt_conv': plt_conv,
+                'plt1': float(plt1) if plt1 is not None else 0.0,
             })
         except (TypeError, ValueError):
             continue
