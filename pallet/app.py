@@ -1432,7 +1432,7 @@ if output_mode.startswith('FCJ'):
     if miss_cnt:
         miss_names = edited_expiry[edited_expiry['적용 유통기한'].isna()]['품목명'].tolist()
         st.warning(f"⚠️ 미매핑 {miss_cnt}개 — 직접 입력하거나 마스터를 추가해주세요: "
-                   + ', '.join(n[:14] for n in miss_names[:10]))
+                   + ', '.join(str(n or '')[:14] for n in miss_names[:10]))
     if len(dup_in_input):
         with st.expander(f'ℹ️ 마스터에 유통기한 2개 이상이었던 품목 ({len(dup_in_input)}개) — 가장 나중 값 사용'):
             st.dataframe(dup_in_input[['품목코드', '품목명', '적용 유통기한', '비고']],
