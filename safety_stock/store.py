@@ -252,6 +252,40 @@ def remove_new_item(code) -> bool:
         return False
 
 
+# ---------- BNF 거래처(행사 CHANNEL) 화이트리스트 ----------
+CHKEY = "bnf_channels"
+BNF_CH_SEED = DATA / "bnf_channels_seed.json"
+
+
+def load_bnf_channels() -> list:
+    """행사 필터용 BNF 거래처 키워드(부분일치). 번들 시드 ∪ Supabase(있으면 대체)."""
+    seed = []
+    if BNF_CH_SEED.exists():
+        try:
+            seed = json.loads(BNF_CH_SEED.read_text(encoding="utf-8"))
+        except Exception:
+            seed = []
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", CHKEY).execute()
+            if r.data and r.data[0].get("value") is not None:
+                return [str(x).strip() for x in (r.data[0]["value"] or []) if str(x).strip()]
+        except Exception:
+            pass
+    return [str(x).strip() for x in seed if str(x).strip()]
+
+
+def save_bnf_channels(channels) -> bool:
+    clean = [str(x).strip() for x in channels if str(x).strip()]
+    if not use_supabase():
+        return False
+    try:
+        _sb().table("app_settings").upsert({"key": CHKEY, "value": clean}).execute()
+        return True
+    except Exception:
+        return False
+
+
 def load_master() -> dict:
     if MASTER.exists():
         with open(MASTER, "r", encoding="utf-8") as f:

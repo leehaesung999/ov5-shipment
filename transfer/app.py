@@ -135,29 +135,84 @@ def parse_ended(file):
     return s
 
 
-def parse_events_new(file, plan_d, reflected):
-    """행사양식 export에서 '신규' 이벤트만 추출(중복 방지).
-    열(0-based): header_id=7, current_flag=9, last_del_date=17, item_number=18, tot_qty=22.
-    신규 조건: current_flag=Y  AND  last_del_date≥계획일자(안 지난 것)  AND  header_id 미반영.
-    반환: (events{코드:수량}, new_ids{header_id}, 통계dict)"""
+BNF_CHANNELS_DEFAULT = ["하프클럽", "오늘의집", "버킷플레이스", "카카오", "메이커스",
+                        "배민대용량", "알리", "제로샵", "영동군청", "스타일셀러", "떠리몰"]
+
+
+def _norm_ch(s):
+    return str(s or "").replace("[", "").replace("]", "").replace(" ", "").replace("_", "").strip()
+
+
+def parse_events_new(file, plan_d, reflected, bnf_channels=None):
+    """행사 파일 → 신규(미반영) BNF 이벤트만 {코드: 수량}.
+    - 0818 형식(헤더에 CHANNEL·ITEM_CODE): BNF 채널만 · END_DATE≥계획일자 · SEQ로 중복방지.
+      수량 = SALE_TARGET_QUANTITY, 채널 부분일치(대괄호/공백/언더바 무시).
+    - 구 행사양식(header_id·customer_name): 하위호환(현행·미지난·header_id 미반영).
+    반환: (events{코드:수량}, new_ids{id}, 통계dict)"""
+    wb = openpyxl.load_workbook(io.BytesIO(file.getvalue()), data_only=True)
+    ws = wb[wb.sheetnames[0]]
+    hdr = [str(ws.cell(1, j).value).strip() if ws.cell(1, j).value is not None else ""
+           for j in range(1, ws.max_column + 1)]
+    kws = [_norm_ch(k) for k in (bnf_channels or BNF_CHANNELS_DEFAULT) if _norm_ch(k)]
+
+    def is_bnf(ch):
+        c = _norm_ch(ch)
+        return bool(c) and any(k in c for k in kws)
+
     events, new_ids = {}, set()
+
+    # ---- 0818 형식 (CHANNEL 기반) ----
+    if "CHANNEL" in hdr and "ITEM_CODE" in hdr:
+        iC = hdr.index("CHANNEL"); iItem = hdr.index("ITEM_CODE")
+        iQty = hdr.index("SALE_TARGET_QUANTITY") if "SALE_TARGET_QUANTITY" in hdr else 13
+        iEnd = hdr.index("END_DATE") if "END_DATE" in hdr else 7
+        iSeq = hdr.index("SEQ") if "SEQ" in hdr else 0
+        n_new = n_ref = n_past = n_ch = 0
+        for r in ws.iter_rows(min_row=2, values_only=True):
+            code = _code(r[iItem]) if iItem < len(r) else None
+            if not code:
+                continue
+            if not is_bnf(r[iC] if iC < len(r) else None):
+                n_ch += 1
+                continue
+            end = r[iEnd] if iEnd < len(r) else None
+            endd = end.date() if hasattr(end, "date") else None
+            if isinstance(endd, date) and endd < plan_d:    # 이미 끝난 행사
+                n_past += 1
+                continue
+            sid = str(r[iSeq]) if (iSeq < len(r) and r[iSeq] is not None) else None
+            if sid and sid in reflected:                     # 이미 반영
+                n_ref += 1
+                continue
+            q = r[iQty] if iQty < len(r) else None
+            if not isinstance(q, (int, float)) or q <= 0:
+                continue
+            events[code] = events.get(code, 0) + q
+            if sid:
+                new_ids.add(sid)
+            n_new += 1
+        wb.close()
+        return events, new_ids, {"신규": n_new, "이미반영": n_ref,
+                                 "지난행사": n_past, "비BNF채널": n_ch, "형식": "0818"}
+
+    # ---- 구 행사양식 형식 (header_id·customer_name) 하위호환 ----
     n_new = n_reflected = n_past = n_flag = 0
-    for r in _rows(file):
+    for r in ws.iter_rows(min_row=2, values_only=True):
         if len(r) < 23:
             continue
         hid = r[7]
         if hid is None:
             continue
         hid = str(hid).strip()
-        if str(r[9]).strip() != "Y":                 # 현행만
+        if str(r[9]).strip() != "Y":
             n_flag += 1
             continue
-        ld = r[17]                                    # last_del_date
+        ld = r[17]
         ldd = (ld.date() if hasattr(ld, "date") else ld) if ld is not None else None
-        if isinstance(ldd, date) and ldd < plan_d:    # 이미 지난 행사
+        if isinstance(ldd, date) and ldd < plan_d:
             n_past += 1
             continue
-        if hid in reflected:                          # 이미 반영됨
+        if hid in reflected:
             n_reflected += 1
             continue
         c = _code(r[18])
@@ -166,8 +221,9 @@ def parse_events_new(file, plan_d, reflected):
             events[c] = events.get(c, 0) + q
             new_ids.add(hid)
             n_new += 1
+    wb.close()
     return events, new_ids, {"신규": n_new, "이미반영": n_reflected,
-                             "지난행사": n_past, "비현행": n_flag}
+                             "지난행사": n_past, "비현행": n_flag, "형식": "행사양식"}
 
 
 def parse_location(file, sources):
@@ -246,9 +302,20 @@ with st.expander("추가 입력 (출고가능·입고예정·종료)"):
     up_end = st.file_uploader("종료품목 (A:CJ코드)", type=["xlsx"], key="t_end")
 
 st.subheader("2️⃣ 행사 이벤트 (선택)")
-up_evt = st.file_uploader("행사양식 xlsx 업로드 — 신규(미반영)만 자동 반영", type=["xlsx"], key="t_evt")
-st.caption("header_id로 중복 판정. 현행(current_flag=Y)·안 지난 행사(last_del_date≥계획일자) 중 "
-           "아직 반영 안 한 것만 이동에 더해집니다. 산출 후 '반영완료'를 눌러야 다음에 제외됩니다.")
+up_evt = st.file_uploader("행사 파일 업로드 (0818 이벤트 형식 / 구 행사양식) — 신규(미반영)만 자동 반영",
+                          type=["xlsx"], key="t_evt")
+_bnf_ch = store.load_bnf_channels() or BNF_CHANNELS_DEFAULT
+st.caption(f"**BNF 거래처만** 필터링해 반영합니다 (네이버·토스 등 제외). "
+           f"안 끝난 행사(END≥계획일자)·미반영건만 이동에 더하고, '반영완료' 후 다음부터 제외됩니다.")
+with st.expander(f"🎯 BNF 거래처 필터 ({len(_bnf_ch)}개) — 편집"):
+    _txt = st.text_area("거래처 키워드 (쉼표 구분, 부분일치)", value=", ".join(_bnf_ch), height=80,
+                        help="행사 파일의 CHANNEL/거래처명에 이 키워드가 포함되면 BNF로 반영합니다. "
+                             "예: 카카오 → [카카오]·[카카오쇼핑]·[카카오메이커스] 모두 포함")
+    if st.button("💾 거래처 목록 저장", key="save_bnf_ch"):
+        newch = [x.strip() for x in _txt.replace("\n", ",").split(",") if x.strip()]
+        ok = store.save_bnf_channels(newch)
+        st.success(f"{len(newch)}개 저장" + (" (Supabase)" if ok else " (로컬은 시드파일)"))
+        st.rerun()
 
 # ---------- 산출 ----------
 if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is None):
@@ -259,7 +326,8 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
         events, new_ids, estat = {}, set(), {}
         if up_evt:
             reflected = store.load_reflected_events()
-            events, new_ids, estat = parse_events_new(up_evt, plan_date, reflected)
+            events, new_ids, estat = parse_events_new(
+                up_evt, plan_date, reflected, store.load_bnf_channels() or BNF_CHANNELS_DEFAULT)
 
         # 이동량 상한(avail): 출고가능재고 파일 ∩ 로케이션(우리 창고) 합계. 둘 다면 더 작은 값.
         loc_inv = parse_location(up_loc, T.WH_SOURCES) if up_loc else None
@@ -365,8 +433,10 @@ if res:
     # 행사 반영 요약 + 반영완료
     est = res.get("estat") or {}
     if est:
-        st.info(f"행사: 신규 {est.get('신규',0)}건 반영 · 이미반영 {est.get('이미반영',0)}건 제외 · "
-                f"지난행사 {est.get('지난행사',0)}건 · 비현행 {est.get('비현행',0)}건")
+        _exj = (f" · 비BNF채널 {est.get('비BNF채널',0)}건 제외" if est.get("형식") == "0818"
+                else f" · 비현행 {est.get('비현행',0)}건")
+        st.info(f"행사[{est.get('형식','?')}]: 신규 {est.get('신규',0)}건 반영 · "
+                f"이미반영 {est.get('이미반영',0)}건 · 지난행사 {est.get('지난행사',0)}건" + _exj)
         if res.get("new_ids"):
             if st.button(f"✅ 신규 행사 {len(res['new_ids'])}건 반영완료 처리", type="secondary"):
                 ok = store.add_reflected_events(res["new_ids"])
