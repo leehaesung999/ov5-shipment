@@ -251,6 +251,60 @@ def parse_location(file, sources):
     return out
 
 
+def parse_allocation(file, plan_d):
+    """카테고리별 할당 모니터링 시트 → BNF 할당 상한. 시트명 코드 기준.
+    각 품목시트에서 'Bnf' 채널 행의 할당량(EA)을 합산. 할당 종료일≥계획일자만 활성.
+    반환: (alloc{품목코드: BNF할당량EA}, rows[표시용 리스트]).
+    """
+    import re
+    wb = openpyxl.load_workbook(io.BytesIO(file.getvalue()), data_only=True)
+    alloc, rows = {}, []
+    for sn in wb.sheetnames:
+        m = re.match(r"^(\d+)\s", sn)
+        if not m:                               # 품목시트(코드로 시작)만
+            continue
+        code = m.group(1)
+        ws = wb[sn]
+        # 할당 종료일
+        endd = None
+        for rr in range(1, 12):
+            for cc in range(1, 6):
+                v = ws.cell(rr, cc).value
+                if isinstance(v, str) and "종료일" in v:
+                    ev = ws.cell(rr, cc + 1).value
+                    endd = ev.date() if hasattr(ev, "date") else None
+        # 채널·할당량 헤더행
+        hr = None
+        for rr in range(1, 16):
+            row = [str(ws.cell(rr, c).value or "") for c in range(1, 11)]
+            if "채널" in row and "할당량" in row:
+                hr = rr
+                break
+        if hr is None:
+            continue
+        hdr = [str(ws.cell(hr, c).value or "").strip() for c in range(1, 11)]
+        chc = hdr.index("채널") + 1
+        qc = hdr.index("할당량") + 1
+        bnf_ea, has = 0, False
+        for rr in range(hr + 1, ws.max_row + 1):
+            ch = ws.cell(rr, chc).value
+            if ch and "bnf" in str(ch).lower():
+                q = ws.cell(rr, qc).value
+                if isinstance(q, (int, float)):
+                    bnf_ea += q
+                    has = True
+        if not has:
+            continue
+        active = (endd is None) or (endd >= plan_d)
+        rows.append({"품목코드": code, "품목명": sn[len(code):].strip(),
+                     "BNF할당(EA)": int(bnf_ea), "종료일": str(endd) if endd else "-",
+                     "활성": "○" if active else "종료"})
+        if active and bnf_ea > 0:
+            alloc[code] = int(bnf_ea)
+    wb.close()
+    return alloc, rows
+
+
 def _pallet_xlsx(rows, plan_d, only_wh=None):
     """이동_박스>0 품목을 'BNF 파레트 구분기' 입력형식으로.
     only_wh 지정 시 그 배정창고 품목만(창고별 피킹). None이면 전체.
@@ -296,6 +350,10 @@ up_loc = st.file_uploader("🏬 로케이션별 재고조회 (우리 창고 IC93
 cap_by_loc = st.checkbox("창고 재고로 이동량 제한 (있는 만큼만 보냄)", value=True,
                          help="로케이션(우리 창고) 재고 합계를 이동량 상한으로 사용. "
                               "창고에 없는 품목은 이동 0, 부족분은 '창고재고부족'으로 표시.")
+up_alloc = st.file_uploader("🎫 할당 파일 (카테고리별 할당 모니터링) — 재고부족 품목 BNF 할당량 제한 · 매주 월요일 갱신",
+                            type=["xlsx"], key="t_alloc")
+st.caption("품목시트의 'Bnf' 채널 할당량(EA)을 상한으로 사용. 할당 종료일 지난 건 제외. "
+           "예: 토장450g BNF 20EA면 그만큼만 이동.")
 with st.expander("추가 입력 (출고가능·입고예정·종료)"):
     up_avail = st.file_uploader("출고가능재고 (WMS export)", type=["xlsx"], key="t_avail")
     up_inc = st.file_uploader("입고예정", type=["xlsx"], key="t_inc")
@@ -323,6 +381,14 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
         stock = parse_stock(up_stock)
         incoming = parse_incoming(up_inc) if up_inc else {}
         ended = parse_ended(up_end) if up_end else set()
+        # 할당 상한: 재고 있는 품목의 alloc(EA)을 BNF 할당량으로 제한(기존 할당과 더 작은 값)
+        alloc_map, alloc_rows = ({}, [])
+        if up_alloc:
+            alloc_map, alloc_rows = parse_allocation(up_alloc, plan_date)
+            for code, ea in alloc_map.items():
+                if code in stock:
+                    cur_a = stock[code].get("alloc")
+                    stock[code]["alloc"] = ea if cur_a is None else min(cur_a, ea)
         events, new_ids, estat = {}, set(), {}
         if up_evt:
             reflected = store.load_reflected_events()
@@ -371,6 +437,7 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
             "wh_pallets": wh_pallets,
             "estat": estat, "new_ids": sorted(new_ids),
             "unreg": unreg,
+            "alloc_rows": alloc_rows,
             "hide_missing": len(stock) < len(baseline),
         }
     except Exception as e:
@@ -386,6 +453,16 @@ if res:
     m[2].metric("총 파레트", f"{summ['총파레트']}")
     m[3].metric("가용부족(창고부족 포함)", f"{summ['가용부족']}")
     m[4].metric("결품/안전재고이하", f"{summ.get('결품',0)}/{summ.get('안전재고이하',0)}")
+
+    # BNF 할당 제한(할당 파일) — 반영된 품목과 상한 표시(매주 눈으로 검증)
+    alloc_rows = res.get("alloc_rows") or []
+    if alloc_rows:
+        active_n = sum(1 for a in alloc_rows if a["활성"] == "○")
+        with st.expander(f"🎫 BNF 할당 제한 {len(alloc_rows)}품목 (활성 {active_n}) — 시트명 기준·할당량 상한",
+                         expanded=True):
+            st.caption("할당 파일에서 뽑은 BNF 할당량입니다. 활성(종료일 이내) 품목만 이동 상한으로 적용됩니다. "
+                       "매주 갱신 시 이 표로 매핑을 확인하세요.")
+            st.dataframe(pd.DataFrame(alloc_rows), width="stretch", hide_index=True)
 
     # 창고재고부족: 요청보다 우리 창고 재고가 모자라 다 못 보낸 품목
     short_rows = [r for r in df.to_dict("records") if r.get("사유") == "창고재고부족"]
