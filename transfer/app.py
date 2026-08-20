@@ -115,8 +115,48 @@ def parse_avail(file):
 
 
 def parse_incoming(file):
-    """입고예정: A=코드, E(5)=낱개. 헤더 2행(그들 양식)."""
+    """입고예정(표식지/FCJ 형식): **PLT_xx 표식지 시트들**의 품목코드·예정수량 합산.
+    예정수량 = 낱개 총량(= 박스×입수). 전체·피킹지 시트는 제외(중복 방지).
+    예정수량 없으면 박스×입수+낱개로 산출. PLT 시트 없으면 구 양식(A=코드,E=낱개) 폴백.
+    반환 {품목코드: 입고예정 낱개(EA)}."""
+    wb = openpyxl.load_workbook(io.BytesIO(file.getvalue()), data_only=True)
+    plt_sheets = [s for s in wb.sheetnames if str(s).upper().startswith("PLT")]
     out = {}
+
+    def _hcol(hdr, name):
+        return (hdr.index(name) + 1) if name in hdr else None
+
+    if plt_sheets:
+        for sn in plt_sheets:
+            ws = wb[sn]
+            hrow = None
+            for rr in range(1, min(20, ws.max_row + 1)):
+                vals = [str(ws.cell(rr, c).value or "").strip() for c in range(1, ws.max_column + 1)]
+                if "품목코드" in vals and ("예정수량" in vals or "박스" in vals):
+                    hrow = rr
+                    break
+            if hrow is None:
+                continue
+            hdr = [str(ws.cell(hrow, c).value or "").strip() for c in range(1, ws.max_column + 1)]
+            ci = _hcol(hdr, "품목코드"); qi = _hcol(hdr, "예정수량")
+            bi = _hcol(hdr, "박스"); ii = _hcol(hdr, "입수"); ni = _hcol(hdr, "낱개")
+            for rr in range(hrow + 1, ws.max_row + 1):
+                code = _code(ws.cell(rr, ci).value) if ci else None
+                if not code or not (code.isdigit() or code.startswith("P")):
+                    continue
+                ea = _num(ws.cell(rr, qi).value) if qi else None
+                if ea is None and bi and ii:                 # 예정수량 없으면 박스×입수(+낱개)
+                    bx = _num(ws.cell(rr, bi).value) or 0
+                    ip = _num(ws.cell(rr, ii).value) or 0
+                    nn = (_num(ws.cell(rr, ni).value) or 0) if ni else 0
+                    ea = bx * ip + nn
+                if code and ea:
+                    out[code] = out.get(code, 0) + ea
+        wb.close()
+        return out
+    wb.close()
+
+    # 구 양식 폴백: A=코드, E(5)=낱개, 헤더 2행
     for r in _rows(file, min_row=3):
         c = _code(r[0])
         ea = r[4] if len(r) > 4 and isinstance(r[4], (int, float)) else 0
