@@ -1069,8 +1069,8 @@ with st.expander('📤 출력 정보 · 마스터 (FCJ)', expanded=True):
     st.divider()
     st.caption('출력은 FCJ 양식(파레트별 시트) 고정입니다.')
 
-# ---------- 📅 유통기한 마스터(출고진행현황) — 본화면(잊지 않도록 밖으로) ----------
-st.markdown('#### 📅 유통기한 매칭용 · 출고진행현황 업로드')
+# ---------- 📅 유통기한 마스터(로케이션설정 조회) — 본화면(잊지 않도록 밖으로) ----------
+st.markdown('#### 📅 유통기한 매칭용 · 로케이션설정 조회 업로드')
 expiry_master = st.session_state.get('expiry_master', EMPTY_EXPIRY_MASTER)
 if expiry_master.get('count'):
     st.success(f"등록됨: {expiry_master['count']:,}개 품목 "
@@ -1079,11 +1079,11 @@ if expiry_master.get('count'):
     if dup_saved:
         st.caption(f"⚠️ 유통기한 2개 이상: {len(dup_saved)}개 품목 (가장 나중 것 사용)")
 else:
-    st.info('💡 출고진행현황(유통기한)을 올리면 파레트별 유통기한이 자동 매칭됩니다. '
+    st.info('💡 로케이션설정 조회(유통기한)을 올리면 파레트별 유통기한이 자동 매칭됩니다. '
             '자동 저장되지 않으니 매번 새로 업로드해주세요.')
 
 new_expiry = st.file_uploader(
-    '출고진행현황(유통기한) 엑셀 — 품목코드 + 유통기한 컬럼', type=['xlsx', 'xls'],
+    '로케이션설정 조회(유통기한) 엑셀 — 품목코드 + 유통기한 컬럼', type=['xlsx', 'xls'],
     key='expiry_uploader',
     help='헤더에 "품목코드"와 "유통기한"(또는 소비기한) 컬럼이 있으면 자동 인식됩니다. '
          '같은 품목코드에 여러 유통기한이 있으면 가장 늦은 것을 사용합니다. '
@@ -1348,7 +1348,7 @@ if output_mode.startswith('FCJ'):
         st.caption(f"마스터: {expiry_master['count']:,}개 품목 등록됨 "
                    f"(갱신 {expiry_master.get('updated_at','-')})")
     else:
-        st.info('위쪽 **📅 유통기한 매칭용 · 출고진행현황 업로드**에 엑셀을 올리면 자동 매칭됩니다. '
+        st.info('위쪽 **📅 유통기한 매칭용 · 로케이션설정 조회 업로드**에 엑셀을 올리면 자동 매칭됩니다. '
                 '마스터가 없어도 입력 엑셀의 소비기한이나 직접 입력으로 채울 수 있습니다.')
 
     # 이번 입고 품목(중복 코드 1줄로 통합)
@@ -1378,7 +1378,7 @@ if output_mode.startswith('FCJ'):
         for key, it in unique_items.items():
             input_v = normalize_expiry(it.get('expiry'))
             default_inv = default_inventory_for(it['item_code'], expiry_master) or ''
-            # 인벤토리 컬럼이 없는 마스터(예: 출고진행현황)는 default_inv=''가 되므로,
+            # 인벤토리 컬럼이 없는 마스터(예: 로케이션설정 조회)는 default_inv=''가 되므로,
             # 이 경우 전체 최댓값(flat-max)으로 조회한다. (인벤토리 있으면 해당 값 사용)
             master_v = lookup_expiry_master(it['item_code'], expiry_master, default_inv)
             applied, source = _decide_applied(input_v, master_v)
@@ -1519,12 +1519,18 @@ def _pallets_signature(pallets):
     )
 
 
-if output_mode.startswith('FCJ'):
+MIME_X = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+date_tag = (fcj_header['date'].strftime('%y%m%d')
+            if (fcj_header and fcj_header.get('date')) else today_str)
+st.markdown('### 📥 다운로드 (표식지 + 피킹지)')
+col_p, col_k = st.columns(2)
+
+# ── 표식지 (FCJ 파레트별 시트) ──
+with col_p:
     if not FCJ_TEMPLATE.exists():
-        st.error(f'FCJ 양식 파일이 없습니다: {FCJ_TEMPLATE}')
+        st.error(f'표식지 양식 파일이 없습니다: {FCJ_TEMPLATE}')
     else:
         try:
-            # 다운로드 빌드 캐시: pallets/header/master/expiry_map 시그너처가 같으면 재사용
             fcj_sig = hashlib.md5(
                 (str(_pallets_signature(pallets))
                  + json.dumps({k: str(v) for k, v in (fcj_header or {}).items()}, sort_keys=True)
@@ -1537,46 +1543,37 @@ if output_mode.startswith('FCJ'):
                 st.session_state.fcj_sig = fcj_sig
                 st.session_state.fcj_bytes = build_fcj_workbook(
                     pallets, fcj_header, master, expiry_map=expiry_map_for_output)
-            xlsx_bytes = st.session_state.fcj_bytes
-
-            date_tag = fcj_header['date'].strftime('%y%m%d') if fcj_header.get('date') else today_str
-            default_name = f'FCJ_입고예정_{date_tag}_파레트{len(pallets)}개.xlsx'
-
-            # 마스터에 없는 품목 수 알려주기
+            st.download_button(
+                '⬇️ 표식지 (파레트별 시트)',
+                data=st.session_state.fcj_bytes,
+                file_name=f'BNF_표식지_{date_tag}_파레트{len(pallets)}개.xlsx',
+                mime=MIME_X, type='primary', use_container_width=True,
+            )
             if master.get('count'):
                 missing = [it for p in pallets for it in p['items']
                            if not lookup_barcode(it['item_code'], master)]
                 if missing:
-                    st.warning(f"바코드 미매핑 품목 {len(missing)}개: " +
-                               ', '.join(sorted({str(it['name'] or it['item_code'])[:14] for it in missing}))[:200])
-
-            st.download_button(
-                '⬇️ FCJ 양식 Excel 다운로드 (파레트별 시트)',
-                data=xlsx_bytes,
-                file_name=default_name,
-                mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-                type='primary',
-                use_container_width=True,
-            )
+                    st.warning(f"바코드 미매핑 {len(missing)}개: " +
+                               ', '.join(sorted({str(it['name'] or it['item_code'])[:14] for it in missing}))[:160])
         except Exception as e:
-            st.error(f'FCJ 파일 생성 실패: {e}')
-else:
-    totals = {'box': total_box, 'qty': total_qty, 'plt': total_plt}
-    basic_sig = hashlib.md5(
-        (str(_pallets_signature(pallets)) + str(title_date) + json.dumps(totals)).encode()
-    ).hexdigest()
-    if (st.session_state.get('basic_sig') != basic_sig
-            or st.session_state.get('basic_bytes') is None):
-        st.session_state.basic_sig = basic_sig
-        st.session_state.basic_bytes = build_excel(pallets, title_date, totals)
-    xlsx_bytes = st.session_state.basic_bytes
-    default_name = f'입고정보_파레트구분_{today_str}.xlsx'
+            st.error(f'표식지 생성 실패: {e}')
 
-    st.download_button(
-        '⬇️ 결과 Excel 다운로드',
-        data=xlsx_bytes,
-        file_name=default_name,
-        mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        type='primary',
-        use_container_width=True,
-    )
+# ── 피킹지 (입고정보 품목목록) ──
+with col_k:
+    try:
+        totals = {'box': total_box, 'qty': total_qty, 'plt': total_plt}
+        basic_sig = hashlib.md5(
+            (str(_pallets_signature(pallets)) + str(title_date) + json.dumps(totals)).encode()
+        ).hexdigest()
+        if (st.session_state.get('basic_sig') != basic_sig
+                or st.session_state.get('basic_bytes') is None):
+            st.session_state.basic_sig = basic_sig
+            st.session_state.basic_bytes = build_excel(pallets, title_date, totals)
+        st.download_button(
+            '⬇️ 피킹지 (품목 목록)',
+            data=st.session_state.basic_bytes,
+            file_name=f'BNF_피킹지_{date_tag}.xlsx',
+            mime=MIME_X, type='secondary', use_container_width=True,
+        )
+    except Exception as e:
+        st.error(f'피킹지 생성 실패: {e}')
