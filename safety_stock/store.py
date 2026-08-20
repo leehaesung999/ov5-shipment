@@ -286,6 +286,32 @@ def save_bnf_channels(channels) -> bool:
         return False
 
 
+# ---------- BNF 할당 누적사용량 (기간 총량 제한) ----------
+AUKEY = "bnf_alloc_used"
+
+
+def load_alloc_used() -> dict:
+    """{품목코드: {"used": 누적이동EA, "end": 할당종료일ISO}}. 종료일 바뀌면 새 기간(리셋)."""
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", AUKEY).execute()
+            if r.data and r.data[0].get("value") is not None:
+                return r.data[0]["value"] or {}
+        except Exception:
+            pass
+    return {}
+
+
+def save_alloc_used(used: dict) -> bool:
+    if not use_supabase():
+        return False
+    try:
+        _sb().table("app_settings").upsert({"key": AUKEY, "value": used}).execute()
+        return True
+    except Exception:
+        return False
+
+
 def load_master() -> dict:
     if MASTER.exists():
         with open(MASTER, "r", encoding="utf-8") as f:
