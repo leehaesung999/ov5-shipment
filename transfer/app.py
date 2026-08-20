@@ -440,7 +440,13 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
         df = pd.DataFrame(rows)
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as xw:
-            df.to_excel(xw, index=False, sheet_name="이동계획")
+            df.to_excel(xw, index=False, sheet_name="전체")
+            # 창고별 시트(배정창고 있을 때 IC930/IC100/IC920 분리)
+            if any(r.get("배정창고") in T.WH_SOURCES for r in rows):
+                for wh in T.WH_SOURCES:
+                    sub = df[df.get("배정창고") == wh] if "배정창고" in df.columns else df.iloc[0:0]
+                    if len(sub):
+                        sub.to_excel(xw, index=False, sheet_name=wh)
         # 창고별 파레트 파일 (배정창고 있는 경우)
         wh_pallets = {}
         if up_loc:
