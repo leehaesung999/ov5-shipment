@@ -260,9 +260,9 @@ def parse_location(file, sources):
 
 
 def parse_allocation(file, plan_d):
-    """카테고리별 할당 모니터링 시트 → BNF 할당 상한. 시트명 코드 기준.
-    각 품목시트에서 'Bnf' 채널 행의 할당량(EA)을 합산. 할당 종료일≥계획일자만 활성.
-    반환: (alloc{품목코드: BNF할당량EA}, rows[표시용 리스트]).
+    """카테고리별 할당 모니터링 시트 → BNF 할당 상한(박스). 시트명 코드 기준.
+    각 품목시트에서 'Bnf' 채널 행의 할당량(박스)을 합산. 할당 종료일≥계획일자만 활성.
+    반환: (alloc{품목코드: {qty:박스, end}}, rows[표시용 리스트]).
     """
     import re
     wb = openpyxl.load_workbook(io.BytesIO(file.getvalue()), data_only=True)
@@ -306,7 +306,7 @@ def parse_allocation(file, plan_d):
         active = (endd is None) or (endd >= plan_d)
         end_str = endd.isoformat() if endd else ""
         rows.append({"품목코드": code, "품목명": sn[len(code):].strip(),
-                     "BNF할당(EA)": int(bnf_ea), "종료일": str(endd) if endd else "-",
+                     "BNF할당(박스)": int(bnf_ea), "종료일": str(endd) if endd else "-",
                      "활성": "○" if active else "종료"})
         if active and bnf_ea > 0:
             alloc[code] = {"qty": int(bnf_ea), "end": end_str}
@@ -394,20 +394,22 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
         stock = parse_stock(up_stock)
         incoming = parse_incoming(up_inc) if up_inc else {}
         ended = parse_ended(up_end) if up_end else set()
-        # 할당 상한(기간 총량): 잔여상한 = 할당량 − 그 기간 누적이동. 기존 할당과 더 작은 값.
+        # 할당 상한(기간 총량, 박스): 잔여박스 = 할당박스 − 누적이동박스. 이동_박스 ≤ 잔여.
         alloc_map, alloc_rows = ({}, [])
         if up_alloc:
             alloc_map, alloc_rows = parse_allocation(up_alloc, plan_date)
             used = store.load_alloc_used()
             for code, info in alloc_map.items():
                 prev = used.get(code)
-                used_ea = prev["used"] if (prev and prev.get("end") == info["end"]) else 0
-                eff = max(info["qty"] - used_ea, 0)          # 잔여 할당 상한
-                info["used"] = used_ea
-                info["eff"] = eff
+                used_box = prev["used"] if (prev and prev.get("end") == info["end"]) else 0
+                eff_box = max(info["qty"] - used_box, 0)       # 잔여 할당(박스)
+                info["used"] = used_box
+                info["eff"] = eff_box
                 if code in stock:
+                    ip = (baseline.get(code) or {}).get("ip") or 1
+                    cap_ea = eff_box * ip                       # 박스상한 → EA(al_box=floor 로 박스복원)
                     ca = stock[code].get("alloc")
-                    stock[code]["alloc"] = eff if ca is None else min(ca, eff)
+                    stock[code]["alloc"] = cap_ea if ca is None else min(ca, cap_ea)
         events, new_ids, estat = {}, set(), {}
         if up_evt:
             reflected = store.load_reflected_events()
@@ -456,14 +458,14 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
             mv_by = {r["품목코드"]: r for r in rows}
             for code, info in alloc_map.items():
                 r = mv_by.get(code)
-                mea = int(r["이동_EA"]) if (r and isinstance(r.get("이동_EA"), (int, float))) else 0
-                if mea > 0:
-                    alloc_moves[code] = {"ea": mea, "end": info["end"]}
+                mbox = int(r["★이동_박스"]) if (r and isinstance(r.get("★이동_박스"), (int, float))) else 0
+                if mbox > 0:
+                    alloc_moves[code] = {"box": mbox, "end": info["end"]}
                 for ar in alloc_rows:
                     if ar["품목코드"] == code:
-                        ar["이미이동"] = info.get("used", 0)
-                        ar["잔여상한"] = info.get("eff")
-                        ar["이번이동"] = mea
+                        ar["이미이동(박스)"] = info.get("used", 0)
+                        ar["잔여상한(박스)"] = info.get("eff")
+                        ar["이번이동(박스)"] = mbox
         # 세션에 저장(반영완료 버튼이 결과를 유지하도록)
         st.session_state["t_result"] = {
             "df": df, "summ": T.summarize(rows),
@@ -494,19 +496,19 @@ if res:
         active_n = sum(1 for a in alloc_rows if a["활성"] == "○")
         with st.expander(f"🎫 BNF 할당 제한 {len(alloc_rows)}품목 (활성 {active_n}) — 기간 총량(잔여) 상한",
                          expanded=True):
-            st.caption("할당량은 **기간 총량**입니다. 잔여상한 = 할당량 − 이미이동. "
+            st.caption("할당량은 **기간 총량(박스)**입니다. 잔여상한 = 할당박스 − 이미이동박스. "
                        "이동 실행 후 **아래 '할당 이동 확정'을 눌러야** 차감되어, 다음부터 잔여만큼만 나갑니다. "
                        "종료일 지난 건 자동 해제. 매주 갱신 시 이 표로 매핑도 확인하세요.")
             st.dataframe(pd.DataFrame(alloc_rows), width="stretch", hide_index=True)
             am = res.get("alloc_moves") or {}
             if am:
-                tot_ea = sum(v["ea"] for v in am.values())
-                if st.button(f"✅ 할당 이동 확정 — {len(am)}품목 {tot_ea}EA 차감", key="alloc_confirm"):
+                tot_box = sum(v["box"] for v in am.values())
+                if st.button(f"✅ 할당 이동 확정 — {len(am)}품목 {tot_box}박스 차감", key="alloc_confirm"):
                     used = store.load_alloc_used()
                     for code, mv in am.items():
                         prev = used.get(code)
                         base = prev["used"] if (prev and prev.get("end") == mv["end"]) else 0
-                        used[code] = {"used": base + mv["ea"], "end": mv["end"]}
+                        used[code] = {"used": base + mv["box"], "end": mv["end"]}
                     okk = store.save_alloc_used(used)
                     st.success(f"{len(am)}품목 차감 완료" + (" (Supabase)" if okk else " (로컬 미저장)")
                                + " — 다음 산출부터 잔여만큼만 이동합니다. (중복 방지: 한 번만 누르세요)")

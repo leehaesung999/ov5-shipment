@@ -63,7 +63,13 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
         # 발주점 = 안전재고(SS). 현재고 < SS 일 때만 발주(현재고==SS면 발주 안 함).
         ss_re = ss_m or 0
         정상보충 = max(mx - cur, 0) if cur < ss_re else 0
-        요청_박스 = math.ceil(max(정상보충 + evt - inc, 0) / ip)
+        if evt > 0:
+            # 행사: 벤더를 (Max+행사)까지 채움 — 현재고에 이미 들어간 만큼 자동 반영
+            #   → 부족하게 나갔으면 다음날 현재고가 낮아 부족분이 자동으로 다시 요청됨(자동이월)
+            요청_ea = max((mx + evt) - cur - inc, 0)
+        else:
+            요청_ea = max(정상보충 - inc, 0)
+        요청_박스 = math.ceil(요청_ea / ip)
 
         # 출고가능_박스: avail None=무제한 / dict에 없으면 0
         if avail is None:
