@@ -60,15 +60,16 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
                              None, alloc, None, 0, 0, "미입력"))
             continue
 
-        # 발주점 = 안전재고(SS). 현재고 < SS 일 때만 발주(현재고==SS면 발주 안 함).
+        # 유효현재고 = 현재고 + 입고예정(이미 이동하기로 한 물량). 이 합계로 발주 판단.
+        eff_cur = cur + inc
+        # 발주점 = 안전재고(SS). 유효현재고 < SS 일 때만 발주(==SS면 발주 안 함).
         ss_re = ss_m or 0
-        정상보충 = max(mx - cur, 0) if cur < ss_re else 0
+        정상보충 = max(mx - eff_cur, 0) if eff_cur < ss_re else 0
         if evt > 0:
-            # 행사: 벤더를 (Max+행사)까지 채움 — 현재고에 이미 들어간 만큼 자동 반영
-            #   → 부족하게 나갔으면 다음날 현재고가 낮아 부족분이 자동으로 다시 요청됨(자동이월)
-            요청_ea = max((mx + evt) - cur - inc, 0)
+            # 행사: 벤더를 (Max+행사)까지 채움 — 유효현재고 반영(부족분 자동이월)
+            요청_ea = max((mx + evt) - eff_cur, 0)
         else:
-            요청_ea = max(정상보충 - inc, 0)
+            요청_ea = max(정상보충, 0)
         요청_박스 = math.ceil(요청_ea / ip)
 
         # 출고가능_박스: avail None=무제한 / dict에 없으면 0
@@ -118,11 +119,12 @@ def _row(code, b, ip, plt, cur, mn, mx, req, evt, inc, av, alloc, movable,
     #   이미 까먹었다면 리드타임 내 결품 위험 → 사람이 확인하라는 신호(공급 로직은 불변).
     #   ss_eff = 계획월의 계절 SS(있으면), 없으면 연 고정 SS.
     ss = ss_eff if ss_eff is not None else (b.get("ss") or 0)
-    if cur is None or reason == "종료(제외)":
+    eff = (cur + (inc or 0)) if cur is not None else None   # 유효현재고=현재고+입고예정
+    if eff is None or reason == "종료(제외)":
         warn = ""
-    elif cur <= 0:
-        warn = "🔴 결품(현재고 0이하)"
-    elif ss and cur <= ss:
+    elif eff <= 0:
+        warn = "🔴 결품(현재고+입고 0이하)"
+    elif ss and eff <= ss:
         warn = f"🟠 안전재고({int(ss)}) 이하 — 소진 빠름(행사 초과 등 점검)"
     else:
         warn = ""
@@ -131,6 +133,7 @@ def _row(code, b, ip, plt, cur, mn, mx, req, evt, inc, av, alloc, movable,
         "품목명": b.get("nm", ""),
         "입수": ip,
         "현재고": cur,
+        "유효현재고": eff if eff is not None else "",
         "안전재고": ss,
         "Min": mn,
         "Max": mx,
