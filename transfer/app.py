@@ -394,6 +394,10 @@ def _pallet_xlsx(rows, plan_d, only_wh=None):
 st.subheader("1️⃣ 입력 (재고 필수, 나머지 선택)")
 up_stock = st.file_uploader("재고입력 (BNF 상품별재고현황 .xls 그대로 OK / 또는 코드·현재고·할당)",
                             type=["xlsx", "xls"], key="t_stock")
+up_inc = st.file_uploader("📥 입고예정 (표식지/FCJ 형식 PLT 시트) — 이미 이동 중인 물량",
+                          type=["xlsx"], key="t_inc")
+st.caption("**유효현재고 = 현재고 + 입고예정** 으로 발주 판단(이중발주 방지). "
+           "표식지(PLT_xx) 시트의 예정수량(=박스×입수)을 합산합니다.")
 up_loc = st.file_uploader("🏬 로케이션별 재고조회 (우리 창고 IC930/920/100) — 창고배정 + 이동량 상한",
                           type=["xlsx"], key="t_loc")
 cap_by_loc = st.checkbox("창고 재고로 이동량 제한 (있는 만큼만 보냄)", value=True,
@@ -403,9 +407,8 @@ up_alloc = st.file_uploader("🎫 할당 파일 (카테고리별 할당 모니�
                             type=["xlsx"], key="t_alloc")
 st.caption("품목시트의 'Bnf' 채널 할당량(EA)을 상한으로 사용. 할당 종료일 지난 건 제외. "
            "예: 토장450g BNF 20EA면 그만큼만 이동.")
-with st.expander("추가 입력 (출고가능·입고예정·종료)"):
+with st.expander("추가 입력 (출고가능·종료)"):
     up_avail = st.file_uploader("출고가능재고 (WMS export)", type=["xlsx"], key="t_avail")
-    up_inc = st.file_uploader("입고예정", type=["xlsx"], key="t_inc")
     up_end = st.file_uploader("종료품목 (A:CJ코드)", type=["xlsx"], key="t_end")
 
 st.subheader("2️⃣ 행사 이벤트 (선택)")
