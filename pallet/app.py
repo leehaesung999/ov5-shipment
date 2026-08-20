@@ -1522,58 +1522,83 @@ def _pallets_signature(pallets):
 MIME_X = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 date_tag = (fcj_header['date'].strftime('%y%m%d')
             if (fcj_header and fcj_header.get('date')) else today_str)
-st.markdown('### 📥 다운로드 (표식지 + 피킹지)')
-col_p, col_k = st.columns(2)
 
-# ── 표식지 (FCJ 파레트별 시트) ──
-with col_p:
-    if not FCJ_TEMPLATE.exists():
-        st.error(f'표식지 양식 파일이 없습니다: {FCJ_TEMPLATE}')
+# 인벤토리(창고) 맵 — 유통기한 매칭표에서. 없으면 (미지정).
+inv_map = {}
+try:
+    for _, _row in edited_expiry.iterrows():
+        _k = _master_key(_row['품목코드'])
+        _iv = str(_row.get('인벤토리') or '').strip()
+        if _k is not None:
+            inv_map[_k] = _iv if _iv in ALLOWED_INVENTORIES else '(미지정)'
+except NameError:
+    pass
+
+# 품목을 창고별로 분류(전체는 그대로, 창고별은 인벤토리 기준)
+wh_groups = {}
+for _it in items:
+    _w = inv_map.get(_master_key(_it['item_code']), '(미지정)')
+    wh_groups.setdefault(_w, []).append(_it)
+wh_order = [w for w in ALLOWED_INVENTORIES if wh_groups.get(w)]
+if wh_groups.get('(미지정)'):
+    wh_order.append('(미지정)')
+
+split_sig = hashlib.md5((
+    json.dumps([[str(it['item_code']), it['box'], it.get('qty'), it.get('plt1'),
+                 inv_map.get(_master_key(it['item_code']), '')] for it in items], sort_keys=True)
+    + json.dumps({k: str(v) for k, v in (fcj_header or {}).items()}, sort_keys=True)
+    + str(master.get('updated_at', '')) + str(master.get('count', 0))
+    + json.dumps(expiry_map_for_output or {}, sort_keys=True)
+    + json.dumps(cfg, sort_keys=True)
+).encode()).hexdigest()
+
+
+def _build_one(pallet_list, g_items):
+    fcj_b = (build_fcj_workbook(pallet_list, fcj_header, master, expiry_map=expiry_map_for_output)
+             if FCJ_TEMPLATE.exists() else None)
+    tot = {'box': sum(i['box'] for i in g_items),
+           'qty': sum((i.get('qty') or 0) for i in g_items),
+           'plt': round(sum((i.get('plt1') or 0) for i in g_items), 2)}
+    pick_b = build_excel(pallet_list, title_date, tot)
+    return {'n_item': len(g_items), 'n_plt': len(pallet_list), 'fcj': fcj_b, 'pick': pick_b}
+
+
+if st.session_state.get('split_sig') != split_sig:
+    built = {'전체': _build_one(pallets, items)}
+    for w in wh_order:
+        built[w] = _build_one(build_pallets(wh_groups[w], cfg), wh_groups[w])
+    st.session_state.split_sig = split_sig
+    st.session_state.split_data = built
+data_all = st.session_state.get('split_data') or {}
+
+
+def _dl_row(label, d, tag):
+    tag_c = tag.replace('(', '').replace(')', '')
+    st.markdown(f"**{label}** — {d.get('n_item', 0)}품목 · {d.get('n_plt', 0)}파레트")
+    c1, c2 = st.columns(2)
+    if d.get('fcj'):
+        c1.download_button(f'⬇️ 표식지 [{tag}]', data=d['fcj'],
+                           file_name=f'BNF_표식지_{tag_c}_{date_tag}.xlsx', mime=MIME_X,
+                           type='primary', use_container_width=True, key=f'fcj_{tag_c}')
     else:
-        try:
-            fcj_sig = hashlib.md5(
-                (str(_pallets_signature(pallets))
-                 + json.dumps({k: str(v) for k, v in (fcj_header or {}).items()}, sort_keys=True)
-                 + str(master.get('updated_at', '')) + str(master.get('count', 0))
-                 + json.dumps(expiry_map_for_output or {}, sort_keys=True)
-                ).encode()
-            ).hexdigest()
-            if (st.session_state.get('fcj_sig') != fcj_sig
-                    or st.session_state.get('fcj_bytes') is None):
-                st.session_state.fcj_sig = fcj_sig
-                st.session_state.fcj_bytes = build_fcj_workbook(
-                    pallets, fcj_header, master, expiry_map=expiry_map_for_output)
-            st.download_button(
-                '⬇️ 표식지 (파레트별 시트)',
-                data=st.session_state.fcj_bytes,
-                file_name=f'BNF_표식지_{date_tag}_파레트{len(pallets)}개.xlsx',
-                mime=MIME_X, type='primary', use_container_width=True,
-            )
-            if master.get('count'):
-                missing = [it for p in pallets for it in p['items']
-                           if not lookup_barcode(it['item_code'], master)]
-                if missing:
-                    st.warning(f"바코드 미매핑 {len(missing)}개: " +
-                               ', '.join(sorted({str(it['name'] or it['item_code'])[:14] for it in missing}))[:160])
-        except Exception as e:
-            st.error(f'표식지 생성 실패: {e}')
+        c1.caption('표식지 양식 없음')
+    if d.get('pick'):
+        c2.download_button(f'⬇️ 피킹지 [{tag}]', data=d['pick'],
+                           file_name=f'BNF_피킹지_{tag_c}_{date_tag}.xlsx', mime=MIME_X,
+                           type='secondary', use_container_width=True, key=f'pick_{tag_c}')
 
-# ── 피킹지 (입고정보 품목목록) ──
-with col_k:
-    try:
-        totals = {'box': total_box, 'qty': total_qty, 'plt': total_plt}
-        basic_sig = hashlib.md5(
-            (str(_pallets_signature(pallets)) + str(title_date) + json.dumps(totals)).encode()
-        ).hexdigest()
-        if (st.session_state.get('basic_sig') != basic_sig
-                or st.session_state.get('basic_bytes') is None):
-            st.session_state.basic_sig = basic_sig
-            st.session_state.basic_bytes = build_excel(pallets, title_date, totals)
-        st.download_button(
-            '⬇️ 피킹지 (품목 목록)',
-            data=st.session_state.basic_bytes,
-            file_name=f'BNF_피킹지_{date_tag}.xlsx',
-            mime=MIME_X, type='secondary', use_container_width=True,
-        )
-    except Exception as e:
-        st.error(f'피킹지 생성 실패: {e}')
+st.markdown('### 📥 다운로드')
+st.markdown('#### 전체 (합본)')
+_dl_row('전체', data_all.get('전체', {}), '전체')
+if wh_order:
+    st.markdown('#### 창고별 (인벤토리 기준)')
+    for w in wh_order:
+        _dl_row(f'🏬 {w}', data_all.get(w, {}), w)
+else:
+    st.caption('창고(인벤토리) 정보가 없어 전체만 나옵니다. 로케이션설정 조회(인벤토리 컬럼 포함)를 올리면 창고별로 나뉩니다.')
+
+if master.get('count'):
+    _miss = [it for p in pallets for it in p['items'] if not lookup_barcode(it['item_code'], master)]
+    if _miss:
+        st.warning(f"바코드 미매핑 {len(_miss)}개: "
+                   + ', '.join(sorted({str(it['name'] or it['item_code'])[:14] for it in _miss}))[:160])
