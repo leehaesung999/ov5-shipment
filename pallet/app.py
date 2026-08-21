@@ -317,6 +317,62 @@ def build_excel(pallets, title_date, totals):
     return buf.getvalue()
 
 
+def build_picking_sheet(pallets, pick_date, expiry_map, loc_map):
+    """피킹지 형식: 제목 'M/D BNF' + [팔레트·품목코드·품목명·박스·유통기한·로케이션].
+    파레트별 그룹(팔레트 번호 병합). 유통기한=매칭값(출고진행 물린 max), 로케이션=허브 loc_map."""
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = '피킹지'
+    thin = Side(border_style='thin', color='888888')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    md = ''
+    if pick_date is not None:
+        try:
+            md = f'{pick_date.month}/{pick_date.day}'
+        except AttributeError:
+            md = str(pick_date)
+    ws.cell(1, 1, f'{md} BNF' if md else 'BNF')
+    ws.merge_cells('A1:F1')
+    ws.cell(1, 1).font = Font(bold=True, size=13)
+    ws.cell(1, 1).alignment = Alignment(horizontal='center', vertical='center')
+
+    for i, h in enumerate(['팔레트', '품목코드', '품목명', '박스', '유통기한', '로케이션'], 1):
+        c = ws.cell(2, i, h)
+        c.font = Font(bold=True)
+        c.fill = PatternFill('solid', fgColor='D9E1F2')
+        c.alignment = Alignment(horizontal='center', vertical='center')
+        c.border = border
+
+    r = 3
+    for p in pallets:
+        start = r
+        for it in p['items']:
+            code = it['item_code']
+            try:
+                ci = int(float(code))
+            except (TypeError, ValueError):
+                ci = None
+            ws.cell(r, 1, p['plt_no'])
+            ws.cell(r, 2, code)
+            ws.cell(r, 3, it.get('name') or code)
+            ws.cell(r, 4, it['box'])
+            ws.cell(r, 5, (expiry_map.get(_master_key(code)) if expiry_map else None) or it.get('expiry'))
+            ws.cell(r, 6, (loc_map.get(ci) if (loc_map and ci is not None) else '') or '')
+            for c in range(1, 7):
+                ws.cell(r, c).border = border
+            r += 1
+        if r - 1 > start:                      # 여러 품목이면 팔레트 번호 셀 병합
+            ws.merge_cells(start_row=start, start_column=1, end_row=r - 1, end_column=1)
+        ws.cell(start, 1).alignment = Alignment(horizontal='center', vertical='center')
+
+    for i, w in enumerate([8, 12, 40, 7, 11, 12], 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 # ---------- 바코드 마스터 관리 ----------
 def load_master():
     # Supabase에 저장된 최신 바코드 마스터가 있으면 로컬 파일로 복원(세션당 1회) 후 읽음.
@@ -1575,13 +1631,19 @@ split_sig = hashlib.md5((
 ).encode()).hexdigest()
 
 
+# 피킹지 로케이션 = 공용 기준정보(허브) 고정로케이션
+try:
+    from master_hub import store as _hub
+    _loc_map = _hub.loc_map()
+except Exception:
+    _loc_map = {}
+_pick_date = fcj_header.get('date') if fcj_header else title_date
+
+
 def _build_one(pallet_list, g_items):
     fcj_b = (build_fcj_workbook(pallet_list, fcj_header, master, expiry_map=expiry_map_for_output)
              if FCJ_TEMPLATE.exists() else None)
-    tot = {'box': sum(i['box'] for i in g_items),
-           'qty': sum((i.get('qty') or 0) for i in g_items),
-           'plt': round(sum((i.get('plt1') or 0) for i in g_items), 2)}
-    pick_b = build_excel(pallet_list, title_date, tot)
+    pick_b = build_picking_sheet(pallet_list, _pick_date, expiry_map_for_output, _loc_map)
     return {'n_item': len(g_items), 'n_plt': len(pallet_list), 'fcj': fcj_b, 'pick': pick_b}
 
 
