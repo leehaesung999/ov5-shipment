@@ -510,8 +510,21 @@ def parse_expiry_master(uploaded_file):
     if header_row is None:
         raise ValueError("'품목코드'와 '유통기한' 컬럼을 자동으로 찾지 못했습니다. 헤더에 두 컬럼이 모두 있는지 확인해주세요.")
 
-    by_inv = {}        # {code: {inv: max_expiry}}
-    flat_max = {}      # {code: max_expiry}
+    # 출고진행(물린) 열들: 헤더에 '출고진행' 포함. 하나라도 수량>0 이면 그 로트는 '물린'.
+    prog_cols = [c for c in range(1, ws.max_column + 1)
+                 if ws.cell(header_row, c).value and '출고진행' in str(ws.cell(header_row, c).value)]
+    import re
+
+    def _first_num(v):
+        if v is None:
+            return 0
+        if isinstance(v, (int, float)):
+            return v
+        m = re.search(r'-?\d+', str(v))
+        return int(m.group()) if m else 0
+
+    tied_inv = {}      # {code: {inv: max_expiry 물린만}}
+    all_inv = {}       # {code: {inv: max_expiry 전체}}  (물린 없을때 폴백)
     inv_set = set()
     skipped = 0
 
@@ -533,14 +546,23 @@ def parse_expiry_master(uploaded_file):
             inv_key = NO_INVENTORY
         inv_set.add(inv_key)
 
-        cd = by_inv.setdefault(code_key, {})
-        if inv_key not in cd or exp_int > cd[inv_key]:
-            cd[inv_key] = exp_int
+        # 배정창고 내 '물린(출고진행)' 로트 중 가장 늦은 유통기한. 출고진행 열 없으면 전부 물린 취급(구파일).
+        tied = (not prog_cols) or any(_first_num(ws.cell(r, pc).value) > 0 for pc in prog_cols)
 
-        if code_key not in flat_max or exp_int > flat_max[code_key]:
-            flat_max[code_key] = exp_int
+        da = all_inv.setdefault(code_key, {})
+        if inv_key not in da or exp_int > da[inv_key]:
+            da[inv_key] = exp_int
+        if tied:
+            dt = tied_inv.setdefault(code_key, {})
+            if inv_key not in dt or exp_int > dt[inv_key]:
+                dt[inv_key] = exp_int
 
-    # 한 코드에 인벤토리가 여러 개면 duplicates에 정리 (늦은 순)
+    # 최종: (코드,창고)별 물린 max, 없으면 전체 max
+    by_inv = {}
+    for code_key, da in all_inv.items():
+        by_inv[code_key] = {ik: tied_inv.get(code_key, {}).get(ik, mx) for ik, mx in da.items()}
+    flat_max = {code_key: max(d.values()) for code_key, d in by_inv.items() if d}
+
     duplicates = {}
     for code, inv_dict in by_inv.items():
         if len(inv_dict) > 1:
