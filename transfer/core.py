@@ -101,7 +101,9 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
         else:
             요청_ea = max(정상보충, 0)
         # 발주 단위 보정: 최소 5박스·5의 배수·0.7파레트↑이면 파레트 단위.
-        요청_박스 = _round_order(math.ceil(요청_ea / ip), plt)
+        # 단, 할당(채널 배정량)이 있는 품목은 라운딩하지 않음 — 배정량 초과·과소진 방지.
+        요청_박스_raw = math.ceil(요청_ea / ip)
+        요청_박스 = 요청_박스_raw if alloc is not None else _round_order(요청_박스_raw, plt)
 
         # 출고가능_박스: avail None=무제한 / dict에 없으면 0
         if avail is None:
