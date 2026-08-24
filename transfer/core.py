@@ -2,8 +2,9 @@
 """재고이동계획 코어 (순수 로직).
 
 이동_박스 = MIN( 요청, 출고가능, 할당 ) 을 박스단위로. 종료품목은 0.
-  · 요청_박스   = ROUNDUP( MAX(정상보충 + 이벤트 - 입고예정, 0) / 입수 )
-  · 정상보충    = 현재고 < 안전재고(SS) 이면 (Max - 현재고), 아니면 0  (==SS면 발주 안 함)
+  · 요청_박스   = 발주단위보정( ROUNDUP( 요청_ea / 입수 ) )
+                  발주단위: 최소 5박스, 5의 배수 올림, 남는 양이 0.7파레트↑이면 다음 파레트로
+  · 정상보충    = 유효현재고 <= 안전재고(SS) 이면 (Max - 유효현재고), 아니면 0  (==SS면 발주함)
   · 이동가능_박스 = MIN( 출고가능_박스, 내림(할당/입수) )
   · 파레트환산   = 이동_박스 / 하대박스수
 
@@ -19,6 +20,35 @@ from __future__ import annotations
 import math
 
 INF = 9e15
+
+# ── 발주 단위 규칙 (여기서 조정) ────────────────────────────────────
+MIN_ORDER_BOX = 5          # 발주 시 최소 박스
+ORDER_STEP_BOX = 5         # 5의 배수로 올림
+PALLET_ROUNDUP_FRAC = 0.7  # 남는 양이 파레트의 0.7 이상이면 다음 파레트로 올림
+
+
+def _round_order(box, plt):
+    """발주(이동) 박스를 발주 단위로 보정한다.
+
+    규칙:
+      · 발주가 없으면(0 이하) 0.
+      · 파레트당 박스수(plt)를 알면: 파레트 단위로 채우고, 남는 양이 0.7파레트
+        이상이면 다음 파레트로 올림. 그 미만이면 남는 양을 5의 배수(최소 5)로 올림.
+      · plt를 모르면 전량을 5의 배수(최소 5)로 올림.
+    예) plt 큰 품목: 1→5, 6→10, 11→15, 16→20, 21→25. (0.7파레트↑ 구간부터 파레트)
+    """
+    if not box or box <= 0:
+        return 0
+    step = lambda x: max(MIN_ORDER_BOX, math.ceil(x / ORDER_STEP_BOX) * ORDER_STEP_BOX)
+    if not plt or plt <= 0:
+        return step(box)
+    full = int(box // plt)               # 꽉 채운 파레트 수
+    rem = box - full * plt               # 남는 박스
+    if rem == 0:
+        return full * plt
+    if rem >= PALLET_ROUNDUP_FRAC * plt:
+        return (full + 1) * plt          # 남는 양이 커서 다음 파레트로 올림
+    return full * plt + step(rem)        # 남는 양은 5의 배수(최소 5)로
 
 
 def _season(b, plan_month):
@@ -62,15 +92,16 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
 
         # 유효현재고 = 현재고 + 입고예정(이미 이동하기로 한 물량). 이 합계로 발주 판단.
         eff_cur = cur + inc
-        # 발주점 = 안전재고(SS). 유효현재고 < SS 일 때만 발주(==SS면 발주 안 함).
+        # 발주점 = 안전재고(SS). 유효현재고 <= SS 일 때 발주(==SS면 발주함).
         ss_re = ss_m or 0
-        정상보충 = max(mx - eff_cur, 0) if eff_cur < ss_re else 0
+        정상보충 = max(mx - eff_cur, 0) if eff_cur <= ss_re else 0
         if evt > 0:
             # 행사: 벤더를 (Max+행사)까지 채움 — 유효현재고 반영(부족분 자동이월)
             요청_ea = max((mx + evt) - eff_cur, 0)
         else:
             요청_ea = max(정상보충, 0)
-        요청_박스 = math.ceil(요청_ea / ip)
+        # 발주 단위 보정: 최소 5박스·5의 배수·0.7파레트↑이면 파레트 단위.
+        요청_박스 = _round_order(math.ceil(요청_ea / ip), plt)
 
         # 출고가능_박스: avail None=무제한 / dict에 없으면 0
         if avail is None:
