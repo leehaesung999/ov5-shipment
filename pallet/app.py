@@ -1664,7 +1664,35 @@ except Exception:
 _pick_date = fcj_header.get('date') if fcj_header else title_date
 
 
+import re as _re_loc
+
+
+def _loc_key(it):
+    """파레트 내 정렬 키 = 로케이션(허브 고정로케이션). 로케이션 없으면 맨 뒤.
+    'A-01-02' 처럼 문자/숫자 혼합도 자연순(숫자는 수치로) 비교."""
+    ci = None
+    try:
+        ci = int(float(it['item_code']))
+    except (TypeError, ValueError):
+        ci = None
+    loc = (_loc_map.get(ci) if (_loc_map and ci is not None) else '') or ''
+    parts = [(0, int(t)) if t.isdigit() else (1, t.lower())
+             for t in _re_loc.split(r'(\d+)', str(loc)) if t]
+    return (0 if loc else 1, parts)
+
+
+def _sort_pallet_items(pallet_list):
+    """각 파레트의 품목을 로케이션 순으로 정렬(파레트 구성/번호는 유지)."""
+    out = []
+    for p in pallet_list:
+        q = dict(p)
+        q['items'] = sorted(p['items'], key=_loc_key)
+        out.append(q)
+    return out
+
+
 def _build_one(pallet_list, g_items):
+    pallet_list = _sort_pallet_items(pallet_list)   # 파레트 내 로케이션 순 정렬
     fcj_b = (build_fcj_workbook(pallet_list, fcj_header, master, expiry_map=expiry_map_for_output)
              if FCJ_TEMPLATE.exists() else None)
     pick_b = build_picking_sheet(pallet_list, _pick_date, expiry_map_for_output, _loc_map)
