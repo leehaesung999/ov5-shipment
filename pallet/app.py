@@ -124,15 +124,28 @@ def build_pallets(items, cfg):
             plt_no += 1
             pallets.append({'plt_no': plt_no, 'rule': '4', 'items': [it]})
 
-    # 규칙 3: 중형, max_count=medium_cap
-    for b in pack_first_fit(rule3, cfg['medium_cap'], plt_max):
+    # 규칙 2·3 통합: 소형(≤small_max)+중형(~medium_max)을 한 파레트에.
+    #   제약: 점유율 합 ≤ plt_max, 총 품목 ≤ small_cap, 그중 중형 품목 ≤ medium_cap.
+    med_ids = {id(i) for i in rule3}
+    merged = sorted(rule3 + rule2, key=lambda x: (x['box'], -x['plt1']))
+    bins = []
+    for it in merged:
+        ismed = id(it) in med_ids
+        placed = False
+        for b in bins:
+            if (len(b['items']) < cfg['small_cap']
+                    and b['sum'] + it['plt1'] <= plt_max + 1e-9
+                    and (not ismed or b['med'] < cfg['medium_cap'])):
+                b['items'].append(it)
+                b['sum'] += it['plt1']
+                b['med'] += 1 if ismed else 0
+                placed = True
+                break
+        if not placed:
+            bins.append({'sum': it['plt1'], 'items': [it], 'med': 1 if ismed else 0})
+    for b in bins:
         plt_no += 1
-        pallets.append({'plt_no': plt_no, 'rule': '3', 'items': b['items']})
-
-    # 규칙 2: 소형, max_count=small_cap
-    for b in pack_first_fit(rule2, cfg['small_cap'], plt_max):
-        plt_no += 1
-        pallets.append({'plt_no': plt_no, 'rule': '2', 'items': b['items']})
+        pallets.append({'plt_no': plt_no, 'rule': '2·3', 'items': b['items']})
 
     return pallets
 
