@@ -286,6 +286,40 @@ def save_bnf_channels(channels) -> bool:
         return False
 
 
+# ---------- 상습 초과 품목 행사수량 보정 배수 ----------
+EUKEY = "event_uplift"
+EU_SEED = DATA / "event_uplift_seed.json"
+
+
+def load_event_uplift() -> dict:
+    """{품목코드: 배수} — 상습 초과 품목의 행사수량 상향. 번들시드 ∪ Supabase(우선)."""
+    seed = {}
+    if EU_SEED.exists():
+        try:
+            seed = {str(k): float(v) for k, v in json.loads(EU_SEED.read_text(encoding="utf-8")).items()}
+        except Exception:
+            seed = {}
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", EUKEY).execute()
+            if r.data and r.data[0].get("value") is not None:
+                return {str(k): float(v) for k, v in (r.data[0]["value"] or {}).items()}
+        except Exception:
+            pass
+    return seed
+
+
+def save_event_uplift(uplift: dict) -> bool:
+    clean = {str(k).strip(): float(v) for k, v in uplift.items() if str(k).strip() and float(v) > 0}
+    if not use_supabase():
+        return False
+    try:
+        _sb().table("app_settings").upsert({"key": EUKEY, "value": clean}).execute()
+        return True
+    except Exception:
+        return False
+
+
 # ---------- BNF 할당 누적사용량 (기간 총량 제한) ----------
 AUKEY = "bnf_alloc_used"
 

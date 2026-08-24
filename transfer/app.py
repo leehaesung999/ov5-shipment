@@ -431,6 +431,26 @@ with st.expander(f"🎯 BNF 거래처 필터 ({len(_bnf_ch)}개) — 편집"):
         st.success(f"{len(newch)}개 저장" + (" (Supabase)" if ok else " (로컬은 시드파일)"))
         st.rerun()
 
+_uplift = store.load_event_uplift()
+with st.expander(f"📈 상습 초과 품목 행사수량 배수 ({len(_uplift)}개) — 편집"):
+    st.caption("과거 실적상 행사 예측보다 많이 나간 품목의 **행사수량을 배수만큼 상향**합니다. "
+               "예: 배수 1.5면 행사 100→150. 한 줄에 '품목코드: 배수' (예: 2061445: 1.6).")
+    _utxt = st.text_area("품목코드: 배수 (줄바꿈 구분)",
+                         value="\n".join(f"{k}: {v}" for k, v in sorted(_uplift.items())),
+                         height=140, key="uplift_txt")
+    if st.button("💾 배수 저장", key="save_uplift"):
+        newu = {}
+        for line in _utxt.replace(",", "\n").splitlines():
+            if ":" in line:
+                a, b = line.split(":", 1)
+                try:
+                    newu[a.strip()] = float(b.strip())
+                except ValueError:
+                    pass
+        ok = store.save_event_uplift(newu)
+        st.success(f"{len(newu)}개 저장" + (" (Supabase)" if ok else " (로컬은 시드파일)"))
+        st.rerun()
+
 # ---------- 산출 ----------
 if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is None):
     try:
@@ -459,6 +479,14 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
             events, new_ids, estat = parse_events_new(
                 up_evt, plan_date, reflected,
                 store.load_bnf_channels() or BNF_CHANNELS_DEFAULT, int(presupply_days))
+            # 상습 초과 품목: 행사수량 × 배수(과거 실적 기반 상향)
+            upl = store.load_event_uplift()
+            n_up = 0
+            for code in list(events):
+                if code in upl and upl[code] and upl[code] != 1:
+                    events[code] = round(events[code] * upl[code])
+                    n_up += 1
+            estat["배수적용"] = n_up
 
         # 이동량 상한(avail): 출고가능재고 파일 ∩ 로케이션(우리 창고) 합계. 둘 다면 더 작은 값.
         loc_inv = parse_location(up_loc, T.WH_SOURCES) if up_loc else None
