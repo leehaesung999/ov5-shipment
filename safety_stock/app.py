@@ -378,6 +378,10 @@ if res:
             if info.get("신규_유사품없음"):
                 msg += f" · ⚠️ 유사품 이력없음 {len(info['신규_유사품없음'])}건({', '.join(info['신규_유사품없음'][:5])})"
             st.info(msg)
+        if info.get("신규최소SS"):
+            st.info(f"🆕 신규(이력짧음)&활발 품목 {info['신규최소SS']}개 → 이력 없는 달 안전재고 "
+                    f"최소 **{info.get('최소SS박스',0)}박스** 적용(비고 '신규최소SS'). "
+                    "그 달 실적이 올라오면 자동으로 실제값 계산, 이력 6개월 넘으면 바닥값 해제.")
         st.dataframe(df, width="stretch", height=460)
 
         # 계절(월별) 프로파일 뷰어
