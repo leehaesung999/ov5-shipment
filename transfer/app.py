@@ -563,6 +563,15 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as xw:
             df.to_excel(xw, index=False, sheet_name="전체")
+            # 공유 내용 시트: 실이동 품목만 (품목코드·품목명·현재고·이동박스·이동수량)
+            share_cols = ["품목코드", "품목명", "현재고", "이동박스", "이동수량"]
+            share = pd.DataFrame(
+                [{"품목코드": r["품목코드"], "품목명": r["품목명"], "현재고": r["현재고"],
+                  "이동박스": r["★이동_박스"], "이동수량": r["이동_EA"]}
+                 for r in rows
+                 if isinstance(r.get("★이동_박스"), (int, float)) and r["★이동_박스"] > 0],
+                columns=share_cols)
+            share.to_excel(xw, index=False, sheet_name="공유 내용")
             # 창고별 시트(배정창고 있을 때 IC930/IC100/IC920 분리)
             if any(r.get("배정창고") in T.WH_SOURCES for r in rows):
                 for wh in T.WH_SOURCES:
