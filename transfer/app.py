@@ -165,6 +165,50 @@ def parse_incoming(file):
     return out
 
 
+def parse_morning(file, password=None):
+    """오전출고(직영몰 주문처리): 품목코드별 품목수량(EA) 합산 → {코드: 출고EA}.
+    확장자는 .xlsx지만 실제 Agile 암호화(OLE2)인 파일이면 password로 복호화 후 읽음.
+    헤더행(상위 6행)에서 '품목코드'·'품목수량'(없으면 '수량' 포함) 컬럼 자동탐색."""
+    raw = file.getvalue()
+    if raw[:4] == b"\xd0\xcf\x11\xe0":            # OLE2 = 암호화된 xlsx
+        import msoffcrypto
+        if not password:
+            raise ValueError("암호화된 오전출고 파일입니다 — 비밀번호를 입력하세요.")
+        dec = io.BytesIO()
+        try:
+            of = msoffcrypto.OfficeFile(io.BytesIO(raw))
+            of.load_key(password=str(password))
+            of.decrypt(dec)
+        except Exception:
+            raise ValueError("복호화 실패 — 비밀번호를 확인하세요.")
+        dec.seek(0)
+        wb = openpyxl.load_workbook(dec, data_only=True)
+    else:
+        wb = openpyxl.load_workbook(io.BytesIO(raw), data_only=True)
+    ws = wb[wb.sheetnames[0]]
+    hrow = None
+    for rr in range(1, min(6, ws.max_row + 1)):
+        vals = [str(ws.cell(rr, c).value or "").strip() for c in range(1, ws.max_column + 1)]
+        if "품목코드" in vals and any("수량" in v for v in vals):
+            hrow = rr
+            break
+    if hrow is None:
+        wb.close()
+        raise ValueError("'품목코드'/'품목수량' 헤더를 찾지 못했습니다.")
+    hdr = [str(ws.cell(hrow, c).value or "").strip() for c in range(1, ws.max_column + 1)]
+    ci = hdr.index("품목코드") + 1
+    qi = (hdr.index("품목수량") + 1) if "품목수량" in hdr else \
+        next((i + 1 for i, v in enumerate(hdr) if "수량" in v), None)
+    out = {}
+    for rr in range(hrow + 1, ws.max_row + 1):
+        code = _code(ws.cell(rr, ci).value)
+        q = ws.cell(rr, qi).value if qi else None
+        if code and isinstance(q, (int, float)):
+            out[code] = out.get(code, 0) + q
+    wb.close()
+    return out
+
+
 def parse_ended(file):
     """종료품목: A=CJ코드. 헤더 1행."""
     s = set()
@@ -396,8 +440,13 @@ up_stock = st.file_uploader("재고입력 (BNF 상품별재고현황 .xls 그대
                             type=["xlsx", "xls"], key="t_stock")
 up_inc = st.file_uploader("📥 입고예정 (표식지/FCJ 형식 PLT 시트) — 이미 이동 중인 물량",
                           type=["xlsx"], key="t_inc")
-st.caption("**유효현재고 = 현재고 + 입고예정** 으로 발주 판단(이중발주 방지). "
-           "표식지(PLT_xx) 시트의 예정수량(=박스×입수)을 합산합니다.")
+up_morning = st.file_uploader("🌅 오전출고 (직영몰 주문처리 파일) — 오전에 이미 나간 물량 차감",
+                              type=["xlsx", "xls"], key="t_morning")
+morning_pw = st.text_input("오전출고 파일 비밀번호 (당일 날짜 MMDD)", value=f"{plan_date:%m%d}",
+                           type="password", key="t_morning_pw",
+                           help="주문처리 파일이 암호화돼 있어 복호화에 필요합니다. 기본값=계획일자 MMDD.")
+st.caption("**유효현재고 = 현재고 + 입고예정 − 오전출고** 로 발주 판단(이중발주 방지). "
+           "입고예정=표식지(PLT_xx) 예정수량 합산. 오전출고=주문처리 파일 품목수량(EA) 합산.")
 up_loc = st.file_uploader("🏬 로케이션별 재고조회 (우리 창고 IC930/920/100) — 창고배정 + 이동량 상한",
                           type=["xlsx"], key="t_loc")
 cap_by_loc = st.checkbox("창고 재고로 이동량 제한 (있는 만큼만 보냄)", value=True,
@@ -456,6 +505,7 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
     try:
         stock = parse_stock(up_stock)
         incoming = parse_incoming(up_inc) if up_inc else {}
+        morning = parse_morning(up_morning, morning_pw) if up_morning else {}
         ended = parse_ended(up_end) if up_end else set()
         # 할당 상한(기간 총량, 박스): 잔여박스 = 할당박스 − 누적이동박스. 이동_박스 ≤ 잔여.
         alloc_map, alloc_rows = ({}, [])
@@ -505,7 +555,8 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
         cap_reason = "창고재고부족" if (loc_inv and cap_by_loc) else "출고가능제한"
 
         rows = T.compute_transfer(baseline, stock, avail, incoming, events, ended,
-                                  plan_month=plan_date.month, cap_reason=cap_reason)
+                                  plan_month=plan_date.month, cap_reason=cap_reason,
+                                  morning=morning)
         if loc_inv:                              # 창고 배정(로케이션재고)
             T.allocate_warehouse(rows, loc_inv)
         df = pd.DataFrame(rows)
@@ -552,6 +603,7 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
             "unreg": unreg,
             "alloc_rows": alloc_rows, "alloc_moves": alloc_moves,
             "hide_missing": len(stock) < len(baseline),
+            "morning_n": len(morning), "morning_tot": sum(morning.values()),
         }
     except Exception as e:
         st.error(f"산출 실패: {e}")
@@ -634,6 +686,11 @@ if res:
                                  "이동_박스": r["★이동_박스"], "배정창고": r["배정창고"],
                                  "창고재고": r["창고재고"], "경고": r["창고경고"]} for r in warn_rows])
             st.dataframe(wdf, width="stretch", hide_index=True)
+
+    # 오전출고 반영 요약
+    if res.get("morning_n"):
+        st.info(f"🌅 오전출고 반영: {res['morning_n']}품목 · {int(res['morning_tot']):,} EA "
+                f"차감(유효현재고 = 현재고 + 입고예정 − 오전출고).")
 
     # 행사 반영 요약 + 반영 확정 (하드 제외: 확정하면 다음 계획부터 그 행사 제외)
     est = res.get("estat") or {}
