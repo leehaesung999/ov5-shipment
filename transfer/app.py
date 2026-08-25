@@ -475,7 +475,7 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
                     stock[code]["alloc"] = cap_ea if ca is None else min(ca, cap_ea)
         events, new_ids, estat = {}, set(), {}
         if up_evt:
-            reflected = set()   # 자동이월 방식 → 중복방지 불필요(벤더 채워지면 자동 멈춤)
+            reflected = store.load_reflected_events()   # 반영완료 목록(하드 제외: 한번 반영시 끝)
             events, new_ids, estat = parse_events_new(
                 up_evt, plan_date, reflected,
                 store.load_bnf_channels() or BNF_CHANNELS_DEFAULT, int(presupply_days))
@@ -635,13 +635,23 @@ if res:
                                  "창고재고": r["창고재고"], "경고": r["창고경고"]} for r in warn_rows])
             st.dataframe(wdf, width="stretch", hide_index=True)
 
-    # 행사 반영 요약 (자동이월 — 확정 버튼 없음)
+    # 행사 반영 요약 + 반영 확정 (하드 제외: 확정하면 다음 계획부터 그 행사 제외)
     est = res.get("estat") or {}
     if est:
         _exj = (f" · 비BNF채널 {est.get('비BNF채널',0)}건 · 이른행사 {est.get('이른행사',0)}건 제외"
                 if est.get("형식") == "0818" else f" · 비현행 {est.get('비현행',0)}건")
-        st.info(f"행사[{est.get('형식','?')}]: 활성 {est.get('신규',0)}건 반영(Max+행사까지 자동이월) · "
-                f"지난행사 {est.get('지난행사',0)}건" + _exj)
+        st.info(f"행사[{est.get('형식','?')}]: 신규 {est.get('신규',0)}건 반영 · "
+                f"이미반영 {est.get('이미반영',0)}건 제외 · 지난행사 {est.get('지난행사',0)}건" + _exj)
+        _new_ids = res.get("new_ids") or []
+        if _new_ids:
+            st.caption("행사수량이 반영된 이 계획을 **실행했다면 아래 '행사 반영 확정'을 누르세요.** "
+                       "누르면 이 행사들은 다음 산출부터 제외됩니다(중복 반영 방지).")
+            if st.button(f"✅ 행사 반영 확정 — {len(_new_ids)}건 (다음 계획부터 제외)", key="evt_confirm"):
+                okk = store.add_reflected_events(_new_ids)
+                st.success(f"{len(_new_ids)}건 반영완료 저장" + (" (Supabase)" if okk else " (로컬 미저장)")
+                           + " — 다음 산출부터 이 행사들은 제외됩니다. (한 번만 누르세요)")
+        else:
+            st.caption("이번에 새로 반영된 행사가 없습니다(모두 이미반영/지난/제외).")
 
     show = df[df["사유"] != "미입력"] if res["hide_missing"] else df
     st.dataframe(show, width="stretch", height=460)
@@ -666,6 +676,6 @@ if res:
     st.caption(f"📅 **계획일자 {plan_date:%m}월의 계절 Min/Max** 기준으로 산출"
                + ("" if _seasonal else " (구 기준: 연 고정값)") + ". "
                "겨울 성수기엔 높게·비수기엔 낮게 자동 반영됩니다.")
-    st.caption("이동=MIN(요청,출고가능,할당) 박스. 행사는 Max+행사까지 채워 부족분 자동이월(확정 불필요). "
+    st.caption("이동=MIN(요청,출고가능,할당) 박스. 행사는 Max+행사까지 채우며, **반영 확정한 행사는 다음 계획부터 제외**(하드 제외). "
                "창고배정=단독가능 창고 중 유통기한 빠른 것(동점 IC930). 분할필요/재고없음은 ⚠️경고. "
                "🧱 창고별 파일을 각 창고 'BNF 파레트 구분기'에 올리면 창고별 피킹 파레트가 나옵니다.")
