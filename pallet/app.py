@@ -333,15 +333,16 @@ def build_excel(pallets, title_date, totals):
     return buf.getvalue()
 
 
-def build_picking_sheet(pallets, pick_date, expiry_map, loc_map):
-    """피킹지 형식: 제목 'M/D BNF' + [팔레트·품목코드·품목명·박스·유통기한·로케이션].
-    파레트별 그룹(팔레트 번호 병합). 유통기한=매칭값(출고진행 물린 max), 로케이션=허브 loc_map."""
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = '피킹지'
-    thin = Side(border_style='thin', color='888888')
-    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+def _is_full_pallet(p, plt_max):
+    """완파레트 = 단독 품목이 파레트를 꽉 채운 것(rule-4 풀파레트). 혼합 파레트는 제외."""
+    its = p.get('items') or []
+    return len(its) == 1 and float(its[0].get('plt1') or 0) >= plt_max - 1e-9
 
+
+def _fill_picking_ws(ws, pallets, pick_date, expiry_map, loc_map, plt_max, border):
+    """워크시트 하나를 피킹지 형식으로 채움:
+    제목 'M/D BNF' + [팔레트·품목코드·품목명·박스·유통기한·로케이션].
+    완파레트(단독 꽉찬 파레트)는 로케이션 빈칸(별도 지정 예정)."""
     md = ''
     if pick_date is not None:
         try:
@@ -363,18 +364,20 @@ def build_picking_sheet(pallets, pick_date, expiry_map, loc_map):
     r = 3
     for p in pallets:
         start = r
+        full = _is_full_pallet(p, plt_max)
         for it in p['items']:
             code = it['item_code']
             try:
                 ci = int(float(code))
             except (TypeError, ValueError):
                 ci = None
+            loc = '' if full else ((loc_map.get(ci) if (loc_map and ci is not None) else '') or '')
             ws.cell(r, 1, p['plt_no'])
             ws.cell(r, 2, code)
             ws.cell(r, 3, it.get('name') or code)
             ws.cell(r, 4, it['box'])
             ws.cell(r, 5, (expiry_map.get(_master_key(code)) if expiry_map else None) or it.get('expiry'))
-            ws.cell(r, 6, (loc_map.get(ci) if (loc_map and ci is not None) else '') or '')
+            ws.cell(r, 6, loc)
             for c in range(1, 7):
                 ws.cell(r, c).border = border
             r += 1
@@ -384,6 +387,20 @@ def build_picking_sheet(pallets, pick_date, expiry_map, loc_map):
 
     for i, w in enumerate([8, 12, 40, 7, 11, 12], 1):
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
+
+
+def build_picking_workbook(named_groups, pick_date, expiry_map, loc_map, plt_max=1.0):
+    """여러 창고(시트)를 한 파일로. named_groups = [(시트명, pallets), ...].
+    각 시트가 피킹지. 완파레트는 로케이션 빈칸."""
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)
+    thin = Side(border_style='thin', color='888888')
+    border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    for name, pallets in named_groups:
+        ws = wb.create_sheet(title=str(name)[:31])
+        _fill_picking_ws(ws, pallets, pick_date, expiry_map, loc_map, plt_max, border)
+    if not wb.sheetnames:                      # 빈 경우 방지
+        wb.create_sheet(title='피킹지')
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
@@ -1060,8 +1077,8 @@ try:  # 단독 실행 시에만 (통합 Home.py에서 실행되면 무시)
 except Exception:
     pass
 
-st.title('📦 BNF(비네이버) 피킹지 표식지')
-st.caption('입고예정 Excel을 업로드하면 파레트 단위로 자동 구분합니다.')
+st.title('📦 BNF(비네이버) 피킹지')
+st.caption('입고예정/이동계획(공유 내용) Excel을 올리면 파레트 단위로 자동 구분해 창고별 피킹지를 만듭니다.')
 
 with st.expander('🎛 피킹 기준값 설정 (박스 분류·파레트 상한)', expanded=False):
     st.caption('변경하면 즉시 재계산됩니다.')
@@ -1121,18 +1138,11 @@ with st.expander('🎛 피킹 기준값 설정 (박스 분류·파레트 상한)
 output_mode = 'FCJ 양식 (파레트별 시트)'   # FCJ 고정(기본 양식 제거)
 
 fcj_header = None
-with st.expander('📤 출력 정보 · 마스터 (FCJ)', expanded=True):
+with st.expander('📤 출력 정보 · 바코드 마스터', expanded=True):
     if output_mode.startswith('FCJ'):
-        st.markdown('**입고 정보 입력**')
-        st.caption('화주명·시간은 고정값(샘표식품 / 09:00)으로 채워집니다.')
-        fcj_date = st.date_input('입고예정일자', value=date.today())
-        fcj_po = st.text_input('PO NO', value='')
-        fcj_vehicle = st.text_input('차량번호', value='')
-        fcj_header = {
-            'date': fcj_date,
-            'po_no': fcj_po,
-            'vehicle': fcj_vehicle,
-        }
+        st.markdown('**피킹 정보**')
+        fcj_date = st.date_input('피킹/입고예정 일자 (피킹지 제목)', value=date.today())
+        fcj_header = {'date': fcj_date}
 
         st.divider()
         st.markdown('**📚 바코드 마스터** (한 번 등록하면 계속 유지 · 재업로드로 갱신)')
@@ -1172,7 +1182,7 @@ with st.expander('📤 출력 정보 · 마스터 (FCJ)', expanded=True):
         expiry_master = st.session_state.get('expiry_master', EMPTY_EXPIRY_MASTER)
 
     st.divider()
-    st.caption('출력은 FCJ 양식(파레트별 시트) 고정입니다.')
+    st.caption('출력은 피킹지(창고별 시트, 한 파일)입니다. 완파레트는 로케이션 빈칸으로 나갑니다.')
 
 # ---------- 📅 유통기한 마스터(로케이션설정 조회) — 본화면(잊지 않도록 밖으로) ----------
 st.markdown('#### 📅 유통기한 매칭용 · 로케이션설정 조회 업로드')
@@ -1694,50 +1704,35 @@ def _sort_pallet_items(pallet_list):
     return out
 
 
-def _build_one(pallet_list, g_items):
-    pallet_list = _sort_pallet_items(pallet_list)   # 파레트 내 로케이션 순 정렬
-    fcj_b = (build_fcj_workbook(pallet_list, fcj_header, master, expiry_map=expiry_map_for_output)
-             if FCJ_TEMPLATE.exists() else None)
-    pick_b = build_picking_sheet(pallet_list, _pick_date, expiry_map_for_output, _loc_map)
-    return {'n_item': len(g_items), 'n_plt': len(pallet_list), 'fcj': fcj_b, 'pick': pick_b}
-
+# 피킹지 = 한 파일, 창고별(IC930/IC920/IC100) 시트. 표식지는 미출력.
+real_wh = [w for w in ALLOWED_INVENTORIES if wh_groups.get(w)]     # 930→920→100 순
+has_unassigned = bool(wh_groups.get('(미지정)'))
+_plt_max = cfg.get('plt_sum_max', 1.0)
 
 if st.session_state.get('split_sig') != split_sig:
-    built = {'전체': _build_one(pallets, items)}
-    for w in wh_order:
-        built[w] = _build_one(build_pallets(wh_groups[w], cfg), wh_groups[w])
+    if real_wh:                                  # 창고 정보 있으면 창고별 시트
+        groups = [(w, _sort_pallet_items(build_pallets(wh_groups[w], cfg))) for w in real_wh]
+        if has_unassigned:
+            groups.append(('미지정', _sort_pallet_items(build_pallets(wh_groups['(미지정)'], cfg))))
+    else:                                        # 없으면 전체 한 시트
+        groups = [('전체', _sort_pallet_items(pallets))]
+    pick_wb = build_picking_workbook(groups, _pick_date, expiry_map_for_output, _loc_map, _plt_max)
     st.session_state.split_sig = split_sig
-    st.session_state.split_data = built
+    st.session_state.split_data = {
+        'pick': pick_wb,
+        'sheets': [(name, len(pl), sum(1 for p in pl if _is_full_pallet(p, _plt_max)))
+                   for name, pl in groups],
+    }
 data_all = st.session_state.get('split_data') or {}
 
-
-def _dl_row(label, d, tag):
-    tag_c = tag.replace('(', '').replace(')', '')
-    st.markdown(f"**{label}** — {d.get('n_item', 0)}품목 · {d.get('n_plt', 0)}파레트")
-    c1, c2 = st.columns(2)
-    if d.get('fcj'):
-        c1.download_button(f'⬇️ 표식지 [{tag}]', data=d['fcj'],
-                           file_name=f'BNF_표식지_{tag_c}_{date_tag}.xlsx', mime=MIME_X,
-                           type='primary', use_container_width=True, key=f'fcj_{tag_c}')
-    else:
-        c1.caption('표식지 양식 없음')
-    if d.get('pick'):
-        c2.download_button(f'⬇️ 피킹지 [{tag}]', data=d['pick'],
-                           file_name=f'BNF_피킹지_{tag_c}_{date_tag}.xlsx', mime=MIME_X,
-                           type='secondary', use_container_width=True, key=f'pick_{tag_c}')
-
 st.markdown('### 📥 다운로드')
-st.markdown('#### 전체 (합본)')
-_dl_row('전체', data_all.get('전체', {}), '전체')
-if wh_order:
-    st.markdown('#### 창고별 (인벤토리 기준)')
-    for w in wh_order:
-        _dl_row(f'🏬 {w}', data_all.get(w, {}), w)
-else:
-    st.caption('창고(인벤토리) 정보가 없어 전체만 나옵니다. 로케이션설정 조회(인벤토리 컬럼 포함)를 올리면 창고별로 나뉩니다.')
-
-if master.get('count'):
-    _miss = [it for p in pallets for it in p['items'] if not lookup_barcode(it['item_code'], master)]
-    if _miss:
-        st.warning(f"바코드 미매핑 {len(_miss)}개: "
-                   + ', '.join(sorted({str(it['name'] or it['item_code'])[:14] for it in _miss}))[:160])
+if data_all.get('pick'):
+    sheets = data_all.get('sheets', [])
+    st.download_button('⬇️ 피킹지 (창고별 시트 · 한 파일)', data=data_all['pick'],
+                       file_name=f'BNF_피킹지_{date_tag}.xlsx', mime=MIME_X,
+                       type='primary', use_container_width=True, key='pick_all')
+    st.caption('시트: ' + ' · '.join(f'{n}({p}PLT, 완파레트 {f})' for n, p, f in sheets)
+               + '  — 완파레트는 로케이션 빈칸(별도 지정).')
+if not real_wh:
+    st.caption('창고(인벤토리) 정보가 없어 전체 한 시트만 나옵니다. '
+               '로케이션설정 조회(인벤토리 컬럼 포함)를 올리면 930/920/100 시트로 나뉩니다.')
