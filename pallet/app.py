@@ -157,10 +157,12 @@ def parse_workbook(uploaded_file):
 
 
 def find_header_row(ws, max_search=10):
+    # 파레트 구분기(Item code) + 이동계획 '공유 내용'(품목코드) 양식 모두 인식
+    keys = ('item code', 'itemcode', '품목코드', '상품코드', '제품코드')
     for r in range(1, min(ws.max_row + 1, max_search + 1)):
-        for c in range(1, min(ws.max_column + 1, 5)):
+        for c in range(1, min(ws.max_column + 1, 6)):
             v = ws.cell(r, c).value
-            if isinstance(v, str) and v.strip().lower() in ('item code', 'itemcode'):
+            if isinstance(v, str) and v.strip().lower() in keys:
                 return r
     return None
 
@@ -202,10 +204,11 @@ def extract_items(ws, header_row):
                 return cmap[n]
         return default
     # 헤더명 우선. 없으면(WMS 최소양식) name/입수/하대는 None→허브에서 보강.
-    c_code = col(['item code', 'itemcode', '품목코드', '상품코드'], 1)
+    c_code = col(['item code', 'itemcode', '품목코드', '상품코드', '제품코드'], 1)
     c_name = col(['item', '품목명', '상품명'])
     c_ipsu = col(['입수'])
-    c_box = col(['박스', 'box'], 4)
+    c_box = col(['박스', 'box', '이동박스'], 4)
+    # 낱개(EA)는 박스×입수로 재계산 — '이동수량'은 무시(박스만 반영, 입수는 허브 기준).
     c_qty = col(['낱개', 'ea'])
     c_exp = col(['소비기한', '유통기한'])
     c_pltc = col(['plt환산', '하대박스수', '하대'])
