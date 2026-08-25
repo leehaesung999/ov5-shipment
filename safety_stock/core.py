@@ -36,6 +36,10 @@ DEFAULT_SETTINGS = {
     "min_ss_box": 10,       # 신규품목 최소 안전재고(박스)
     "new_span_days": 183,   # 시작~최신 span 이 이하면 '신규(이력짧음)'
     "new_active_days": 45,  # 최근 이 일수내 출고 있으면 '활발'
+    # 연중판매형(기존·활발) 품목: 이력 없는 달만 최소 N박스(계절상품과 구분).
+    #   판매한 달력월(1~12) 수가 기준 이상이면 연중판매형으로 봄.
+    "min_ss_box_staple": 3,   # 연중판매형 이력없는 달 최소 안전재고(박스)
+    "staple_min_months": 8,   # 판매 달력월 수가 이 이상이면 연중판매형
 }
 PROMO_MULT = 4          # 시드용 딜 판정(중앙값×배수) — CJ실적엔 미사용
 DIL_ABS_MIN = 30
@@ -151,12 +155,15 @@ def _exposure_windows(dv, exp):
     return wins
 
 
-def _monthly_profile(hist_item, dates, ip, z, lead, batch, exp, floor_ea=0):
+def _monthly_profile(hist_item, dates, ip, z, lead, batch, exp,
+                     floor_ea=0, empty_floor_ea=0):
     """달력월(1~12)별 {rate, ss, mn, mx} 프로파일. 그 달 날들로 직접 산출.
-    비수기(수요0)는 0. 같은 달이 여러 해 있으면 함께 풀링(달력 연속만 창 구성).
-    floor_ea>0(신규&활발 품목): 이력 없는 달은 SS=Max=floor(최소 유지), 있는 달은 max(계산,floor)."""
+    floor_ea>0(신규&활발 품목): 모든 달 최소값(이력 없는 달·있는 달 공통).
+    empty_floor_ea>0(연중판매형): 이력 '없는' 달만 최소값(있는 달은 실계산 그대로).
+      → 이력 없는 달 바닥값 = max(floor_ea, empty_floor_ea). 둘 다 0이면 0(계절상품 비수기)."""
     ip = ip or 1
     fl = floor_ea or 0
+    efl = max(fl, empty_floor_ea or 0)         # 이력 없는 달 바닥값
     by_m = {}
     for d in dates:
         by_m.setdefault(int(d[5:7]), []).append(d)
@@ -169,14 +176,14 @@ def _monthly_profile(hist_item, dates, ip, z, lead, batch, exp, floor_ea=0):
                    for d in dd]
             tot = sum(ser)
         if not dd or tot <= 0:                 # 이력 없는 달
-            prof[m] = ({"rate": 0, "ss": fl, "mn": fl, "mx": fl} if fl
+            prof[m] = ({"rate": 0, "ss": efl, "mn": efl, "mx": efl} if efl
                        else {"rate": 0, "ss": 0, "mn": 0, "mx": 0})
             continue
         rate = tot / len(dd)
         dv = [(date.fromisoformat(dd[i]), ser[i]) for i in range(len(dd))]
         win = _exposure_windows(dv, exp)
         sigma = _sd(win) if win else 0.0
-        ss = max(ip, fl, math.ceil(z * sigma / ip) * ip)
+        ss = max(ip, fl, math.ceil(z * sigma / ip) * ip)   # 있는 달: 신규floor만(연중floor는 빈달 전용)
         mn = math.ceil(rate * lead + ss)
         mx = max(math.ceil((mn + rate * batch) / ip), math.ceil((mn + 1) / ip)) * ip
         prof[m] = {"rate": round(rate, 1), "ss": ss, "mn": mn, "mx": mx}
@@ -217,10 +224,15 @@ def compute(history, master, settings=None, uplift=None, new_items=None):
     min_ss_box = int(s.get("min_ss_box", 0))
     new_span = int(s.get("new_span_days", 183))
     new_active = int(s.get("new_active_days", 45))
-    floor_by = {}                               # {코드: 최소SS EA} 월별에도 동일 적용
+    staple_box = int(s.get("min_ss_box_staple", 0))
+    staple_min_m = int(s.get("staple_min_months", 8))
+    window_months = {int(d[5:7]) for d in dates}   # 롤링창에 존재하는 달력월(1~12)
+    floor_by = {}          # {코드: 신규 최소SS EA} — 모든 달 공통
+    empty_floor_by = {}    # {코드: 연중 최소SS EA} — 이력 없는 달만
     rows = []
     n_grad = 0
     n_floor = 0
+    n_staple = 0
     for code, hist_item in history.items():
         scode = str(code)
         stx = _item_stats(hist_item, dates, ndays, exp)
@@ -236,18 +248,33 @@ def compute(history, master, settings=None, uplift=None, new_items=None):
         floor_ea = _new_thin_floor(hist_item, data_max, new_span, new_active,
                                    min_ss_box * ip_i)
         floor_by[scode] = floor_ea
+        # 연중판매형(기존·활발) 최소SS: 신규floor 미대상 + 최근 출고 + 판매 달력월 다수
+        #   + 실제 이력 없는 달이 존재(=floor가 실제로 채울 달이 있을 때만).
+        empty_floor = 0
+        if floor_ea == 0 and staple_box > 0 and data_max is not None:
+            last = date.fromisoformat(max(hist_item))
+            still_active = (data_max - last).days <= new_active
+            cal_months = {int(d[5:7]) for d in dates
+                          if (hist_item.get(d) or [0, 0])[0] - (hist_item.get(d) or [0, 0])[1] > 0}
+            has_empty = len(cal_months) < len(window_months)   # 롤링창에 안 판 달이 있음
+            if still_active and len(cal_months) >= staple_min_m and has_empty:
+                empty_floor = staple_box * ip_i
+        empty_floor_by[scode] = empty_floor
         deal_days = sum(1 for d in dates if (hist_item.get(d) or [0, 0])[1] > 0)
         rows.append(_ss_row(scode, m.get("ip"), m.get("plt"), m.get("nm"),
                             m.get("cat"), rate, sigma * u, z, lead, batch,
                             deal_days,
                             note_extra=(f"결품보정×{round(u,2)}" if u > 1.0 else "")
                             + (" / 신규(자립)" if is_new else "")
-                            + (f" / 신규최소SS {min_ss_box}박스" if floor_ea else ""),
+                            + (f" / 신규최소SS {min_ss_box}박스" if floor_ea else "")
+                            + (f" / 연중최소SS {staple_box}박스" if empty_floor else ""),
                             floor_ea=floor_ea))
         if is_new:
             n_grad += 1
         if floor_ea:
             n_floor += 1
+        if empty_floor:
+            n_staple += 1
 
     # 유사품 기반 신규품목 시드 (자립 전인 것)
     n_seed = 0
@@ -275,7 +302,8 @@ def compute(history, master, settings=None, uplift=None, new_items=None):
         hi = history.get(r["품목코드"])
         if hi:
             r["months"] = _monthly_profile(hi, dates, r["입수"], z, lead, batch, exp,
-                                           floor_ea=floor_by.get(r["품목코드"], 0))
+                                           floor_ea=floor_by.get(r["품목코드"], 0),
+                                           empty_floor_ea=empty_floor_by.get(r["품목코드"], 0))
         else:
             v = {"rate": r["일평균(딜제외)"], "ss": r["안전재고_EA"],
                  "mn": r["Min(발주점,EA)"], "mx": r["Max(목표재고,EA)"]}
@@ -291,6 +319,8 @@ def compute(history, master, settings=None, uplift=None, new_items=None):
                   "신규자립": n_grad,
                   "신규최소SS": n_floor,
                   "최소SS박스": min_ss_box,
+                  "연중최소SS": n_staple,
+                  "연중최소SS박스": staple_box,
                   "신규_유사품없음": no_analog}
 
 
