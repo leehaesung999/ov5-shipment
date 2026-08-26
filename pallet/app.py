@@ -207,7 +207,8 @@ def extract_items(ws, header_row):
     c_code = col(['item code', 'itemcode', '품목코드', '상품코드', '제품코드'], 1)
     c_name = col(['item', '품목명', '상품명'])
     c_ipsu = col(['입수'])
-    c_box = col(['박스', 'box', '이동박스'], 4)
+    # 박스 컬럼: 파레트구분기'박스' / WMS'box' / 공유내용'이동박스' / 이동계획'★이동_박스'.
+    c_box = col(['박스', 'box', '이동박스', '★이동_박스', '이동_박스'], 4)
     # 낱개(EA)는 박스×입수로 재계산 — '이동수량'은 무시(박스만 반영, 입수는 허브 기준).
     c_qty = col(['낱개', 'ea'])
     c_exp = col(['소비기한', '유통기한'])
@@ -243,6 +244,8 @@ def extract_items(ws, header_row):
             box = int(g(c_box)) if g(c_box) is not None else 0
         except (TypeError, ValueError):
             box = 0
+        if box <= 0:                       # 이동 0(전체시트의 미이동 품목 등) 제외
+            continue
         name = g(c_name); ipsu = g(c_ipsu); plt_conv = g(c_pltc); plt1 = g(c_plt1)
         expiry = g(c_exp); qty = g(c_qty)
         # 빠진 값은 허브에서 보강(WMS 템플릿 등 최소양식 대응)
@@ -1289,7 +1292,9 @@ sheet_names = st.session_state.cached_sheet_names
 
 col_a, col_b = st.columns([1, 3])
 with col_a:
-    sheet = st.selectbox('시트 선택', sheet_names, index=0)
+    # 이동계획 파일이면 '공유 내용'(이동품목만) 시트를 기본 선택
+    _def_idx = sheet_names.index('공유 내용') if '공유 내용' in sheet_names else 0
+    sheet = st.selectbox('시트 선택', sheet_names, index=_def_idx)
 
 # 선택된 시트가 캐시에 없으면 파싱해서 저장
 per_sheet = st.session_state.cached_per_sheet
