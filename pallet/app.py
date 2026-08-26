@@ -395,6 +395,23 @@ def _fill_picking_ws(ws, pallets, pick_date, expiry_map, loc_map, plt_max, borde
 # 창고 → 요약 표기명 (사용자 지정): IC930=통합, IC920=ATN, IC100=제품
 WH_LABEL = {'IC930': '통합', 'IC920': 'ATN', 'IC100': '제품'}
 WH_SUMMARY_ORDER = ['IC930', 'IC920', 'IC100']   # 표시 순서: 통합·ATN·제품
+FINAL_ORDER = ['IC930', 'IC100', 'IC920']         # 최종(통합) 시트 순서: 930→100→920
+
+
+def _combined_pallets(named_groups, order=FINAL_ORDER):
+    """창고별 파레트를 order대로 이어붙이고 팔레트 번호를 연속 재부여(1,2,…)."""
+    by_name = {name: pallets for name, pallets in named_groups}
+    seq = [w for w in order if w in by_name] \
+        + [name for name, _ in named_groups if name not in order]   # 나머지(전체/미지정)는 뒤
+    combined = []
+    n = 0
+    for w in seq:
+        for p in by_name.get(w, []):
+            n += 1
+            q = dict(p)
+            q['plt_no'] = n
+            combined.append(q)
+    return combined
 
 
 def _fill_summary_ws(ws, named_groups, border):
@@ -431,8 +448,11 @@ def build_picking_workbook(named_groups, pick_date, expiry_map, loc_map, plt_max
     wb.remove(wb.active)
     thin = Side(border_style='thin', color='888888')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
-    if named_groups:                           # 요약 시트(맨 앞)
+    if named_groups:                           # 요약 + 최종(통합) 시트(맨 앞)
         _fill_summary_ws(wb.create_sheet(title='요약'), named_groups, border)
+        combined = _combined_pallets(named_groups)   # 930→100→920 연속번호
+        _fill_picking_ws(wb.create_sheet(title='최종'), combined,
+                         pick_date, expiry_map, loc_map, plt_max, border)
     for name, pallets in named_groups:
         ws = wb.create_sheet(title=str(name)[:31])
         _fill_picking_ws(ws, pallets, pick_date, expiry_map, loc_map, plt_max, border)
