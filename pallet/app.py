@@ -392,13 +392,47 @@ def _fill_picking_ws(ws, pallets, pick_date, expiry_map, loc_map, plt_max, borde
         ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = w
 
 
+# 창고 → 요약 표기명 (사용자 지정): IC930=통합, IC920=ATN, IC100=제품
+WH_LABEL = {'IC930': '통합', 'IC920': 'ATN', 'IC100': '제품'}
+WH_SUMMARY_ORDER = ['IC930', 'IC920', 'IC100']   # 표시 순서: 통합·ATN·제품
+
+
+def _fill_summary_ws(ws, named_groups, border):
+    """요약 시트: BNF로 가는 창고별 파레트 개수 + 전체 파레트 환산(점유율 합)."""
+    counts = {name: len(pallets) for name, pallets in named_groups}
+    total_occ = sum(float(it.get('plt1') or 0)
+                    for _n, pallets in named_groups for p in pallets for it in p['items'])
+    cols = [w for w in WH_SUMMARY_ORDER if w in counts] \
+        + [w for w in counts if w not in WH_SUMMARY_ORDER]
+    headers = [''] + [WH_LABEL.get(w, w) for w in cols] + ['팔레트 환산']
+    for i, h in enumerate(headers, 1):
+        c = ws.cell(1, i, h)
+        c.font = Font(bold=True)
+        c.fill = PatternFill('solid', fgColor='D9E1F2')
+        c.alignment = Alignment(horizontal='center', vertical='center')
+        c.border = border
+    ws.cell(2, 1, 'BNF').font = Font(bold=True)
+    for j, w in enumerate(cols, 2):
+        ws.cell(2, j, counts.get(w, 0))
+    ws.cell(2, len(cols) + 2, round(total_occ, 2))   # 전체 파레트 환산
+    for j in range(1, len(cols) + 3):
+        ws.cell(2, j).border = border
+        ws.cell(2, j).alignment = Alignment(horizontal='center')
+    ws.column_dimensions['A'].width = 8
+    for j in range(2, len(cols) + 3):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(j)].width = 11
+
+
 def build_picking_workbook(named_groups, pick_date, expiry_map, loc_map, plt_max=1.0):
     """여러 창고(시트)를 한 파일로. named_groups = [(시트명, pallets), ...].
-    각 시트가 피킹지. 완파레트는 로케이션 빈칸."""
+    맨 앞에 요약 시트(창고별 파레트 개수·전체 환산), 이후 창고별 피킹지.
+    완파레트는 로케이션 빈칸."""
     wb = openpyxl.Workbook()
     wb.remove(wb.active)
     thin = Side(border_style='thin', color='888888')
     border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    if named_groups:                           # 요약 시트(맨 앞)
+        _fill_summary_ws(wb.create_sheet(title='요약'), named_groups, border)
     for name, pallets in named_groups:
         ws = wb.create_sheet(title=str(name)[:31])
         _fill_picking_ws(ws, pallets, pick_date, expiry_map, loc_map, plt_max, border)
