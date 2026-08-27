@@ -667,6 +667,7 @@ def edit_재고지_1단(stock_path, master_path, loc_list_path,
             "하대": m.get("하대"),
             "현재고": 현재고,
             "차이수량": diff_qty.get(r["code"]) if diff_qty else None,
+            "is_fixed": bool(r["fixed_loc"] and str(r["fixed_loc"]).strip() == loc),
         })
 
     # 차이수량 있는데 실사지에 안 뽑힌 품목 → 지정로케이션 fixed_loc으로 가상 행 추가
@@ -694,6 +695,7 @@ def edit_재고지_1단(stock_path, master_path, loc_list_path,
                     "하대": m.get("하대"),
                     "현재고": 0,
                     "차이수량": diff_qty[code],
+                    "is_fixed": True,  # fixed_loc 자리에 만든 가상 행
                 })
             log(f"  지정위치 재고 0인 차이수량 품목 {len(code_info):,}건 추가")
 
@@ -706,7 +708,11 @@ def edit_재고지_1단(stock_path, master_path, loc_list_path,
         for idxs in by_code.values():
             if len(idxs) < 2:
                 continue
-            best = max(idxs, key=lambda i: rows[i]["유통기한"] or datetime.min)
+            # ① 가장 늦은 유통기한 → ② 동률이면 기본로케(fixed_loc==location) 우선
+            best = max(idxs, key=lambda i: (
+                rows[i]["유통기한"] or datetime.min,
+                1 if rows[i].get("is_fixed") else 0,
+            ))
             for i in idxs:
                 if i != best:
                     rows[i]["차이수량"] = None
