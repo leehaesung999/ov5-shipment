@@ -402,24 +402,47 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
             loc_list_path = _loc_tmp
             _lmeta = _fetch_loc_meta()
         else:
-            _lmeta = _fetch_loc_meta()
-            if _lmeta:
-                _lb = _fetch_loc_bytes(str(_lmeta.get("updated", "")))
-                if _lb:
-                    _lp = TMP / "_loc_sb.xlsx"
-                    _lp.write_bytes(_lb)
-                    loc_list_path = str(_lp)
+            # 우선순위: ① 공용 기준정보(master_hub 고정로케이션 매핑) → ② Supabase inventory_loc → ③ 내장 기본본
+            _hub_loc_set = set()
+            _hub_meta = None
+            try:
+                _hlm, _hub_meta = hub.load_loc()
+                if _hlm:
+                    _hub_loc_set = {str(v).strip() for v in _hlm.values() if v}
+            except Exception:
+                pass
+
+            if _hub_loc_set:
+                import openpyxl as _op
+                _lp = TMP / "_loc_from_hub.xlsx"
+                _wb = _op.Workbook()
+                _ws = _wb.active
+                _ws.append(["로케이션ID"])
+                for _loc in sorted(_hub_loc_set):
+                    _ws.append([_loc])
+                _wb.save(_lp)
+                loc_list_path = str(_lp)
+                _lmeta = {"updated": (_hub_meta or {}).get("갱신", "?"),
+                          "n": len(_hub_loc_set), "source": "hub"}
+            else:
+                _lmeta = _fetch_loc_meta()
+                if _lmeta:
+                    _lb = _fetch_loc_bytes(str(_lmeta.get("updated", "")))
+                    if _lb:
+                        _lp = TMP / "_loc_sb.xlsx"
+                        _lp.write_bytes(_lb)
+                        loc_list_path = str(_lp)
+                    else:
+                        loc_list_path = LOC_DEFAULT if Path(LOC_DEFAULT).exists() else None
                 else:
                     loc_list_path = LOC_DEFAULT if Path(LOC_DEFAULT).exists() else None
-            else:
-                loc_list_path = LOC_DEFAULT if Path(LOC_DEFAULT).exists() else None
         if _lmeta:
-            st.info(f"📅 지정로케이션 마지막 업데이트: **{_lmeta.get('updated', '?')}** "
-                    f"({_lmeta.get('n', '?')}건)")
+            _src = "공용 기준정보(고정로케이션 매핑)" if _lmeta.get("source") == "hub" else "실사지 사이드바"
+            st.info(f"📅 지정로케이션: **{_lmeta.get('n', '?')}건** · 갱신 {_lmeta.get('updated', '?')} · 출처: {_src}")
         elif Path(LOC_DEFAULT).exists():
-            st.caption("지정로케이션: 내장 기본본 — 업로드하면 날짜가 갱신됩니다")
+            st.caption("지정로케이션: 내장 기본본 — 공용 기준정보 관리에서 고정로케이션 등록하면 자동 사용됩니다")
         else:
-            st.warning("지정로케이션 없음 — 업로드 필요")
+            st.warning("지정로케이션 없음 — 공용 기준정보 관리에서 고정로케이션 등록 필요")
         st.divider()
         threshold = st.slider("유통기한 분석 잔존율 기준", 0.0, 1.0, 0.5, 0.05)
         # 하프도달 점검(OV5/OV6/비Lock)은 '오늘'이 아니라 실제 입고일(=다음 영업일) 기준으로 판정.
