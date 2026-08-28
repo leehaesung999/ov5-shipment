@@ -115,9 +115,9 @@ def parse_avail(file):
 
 
 def parse_incoming(file):
-    """입고예정(표식지/FCJ 형식): **PLT_xx 표식지 시트들**의 품목코드·예정수량 합산.
-    예정수량 = 낱개 총량(= 박스×입수). 전체·피킹지 시트는 제외(중복 방지).
-    예정수량 없으면 박스×입수+낱개로 산출. PLT 시트 없으면 구 양식(A=코드,E=낱개) 폴백.
+    """입고예정: 우선순위 ① 이동계획 결과의 '공유 내용' 시트(품목코드+이동수량EA),
+    ② 표식지/FCJ 형식 **PLT_xx 시트들**(품목코드·예정수량), ③ 구 양식(A=코드,E=낱개).
+    이동계획 파일을 그대로 올리면 '공유 내용'의 이동수량이 입고예정이 됨(이미 이동하기로 한 물량).
     반환 {품목코드: 입고예정 낱개(EA)}."""
     wb = openpyxl.load_workbook(io.BytesIO(file.getvalue()), data_only=True)
     plt_sheets = [s for s in wb.sheetnames if str(s).upper().startswith("PLT")]
@@ -125,6 +125,29 @@ def parse_incoming(file):
 
     def _hcol(hdr, name):
         return (hdr.index(name) + 1) if name in hdr else None
+
+    # ① '공유 내용' 시트(이동계획 결과) — 품목코드 + 이동수량(EA)
+    share = next((s for s in wb.sheetnames
+                  if str(s).replace(" ", "") == "공유내용"), None)
+    if share:
+        ws = wb[share]
+        hdr = [str(ws.cell(1, c).value or "").strip() for c in range(1, ws.max_column + 1)]
+        ci = _hcol(hdr, "품목코드")
+        qi = _hcol(hdr, "이동수량") or _hcol(hdr, "이동_EA")
+        bi = _hcol(hdr, "이동박스") or _hcol(hdr, "★이동_박스")
+        ii = _hcol(hdr, "입수")
+        if ci and (qi or (bi and ii)):
+            for rr in range(2, ws.max_row + 1):
+                code = _code(ws.cell(rr, ci).value)
+                if not code or not (code.isdigit() or code.startswith("P")):
+                    continue
+                ea = _num(ws.cell(rr, qi).value) if qi else None
+                if ea is None and bi and ii:            # 이동수량 없으면 이동박스×입수
+                    ea = (_num(ws.cell(rr, bi).value) or 0) * (_num(ws.cell(rr, ii).value) or 0)
+                if code and ea:
+                    out[code] = out.get(code, 0) + ea
+            wb.close()
+            return out
 
     if plt_sheets:
         for sn in plt_sheets:
