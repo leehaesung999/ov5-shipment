@@ -252,6 +252,49 @@ def remove_new_item(code) -> bool:
         return False
 
 
+# ---------- ABC 재배치 분석기 일평균출고(930 총출고) — 이동계획 가용일수용 ----------
+def load_abc_daily_rate() -> dict:
+    """ABC 분석기의 월별 데이터에서 품목별 일평균출고(box/일) 평균을 반환.
+    Supabase(abc_monthly_index + abc_monthly_b64_*)에서 로드. 없으면 {}.
+    (930 총출고 기준 — 가용일수 = 930 창고재고 ÷ 이 값)"""
+    if not use_supabase():
+        return {}
+    try:
+        import base64
+        import io as _io
+        import pandas as _pd
+        r = _sb().table("app_settings").select("value").eq("key", "abc_monthly_index").execute()
+        idx = (r.data[0]["value"] if r.data else None) or []
+        if not idx:
+            return {}
+        keys = ["abc_monthly_b64_" + str(ym).replace("-", "_") for ym in idx]
+        rr = _sb().table("app_settings").select("key,value").in_("key", keys).execute()
+        sums, cnts = {}, {}
+        for row in (rr.data or []):
+            b = row.get("value")
+            if not b:
+                continue
+            df = _pd.read_excel(_io.BytesIO(base64.b64decode(b)), sheet_name=0)
+            df.columns = [str(c).strip() for c in df.columns]
+            if "품번" in df.columns and "일평균출고" in df.columns:
+                cc, ac = "품번", "일평균출고"
+            elif df.shape[1] > 12:
+                cc, ac = df.columns[2], df.columns[12]
+            else:
+                continue
+            avgs = _pd.to_numeric(df[ac], errors="coerce").fillna(0)
+            for code, avg in zip(df[cc], avgs):
+                s = str(code).strip()
+                s = s[:-2] if s.endswith(".0") else s
+                if not s or s == "nan":
+                    continue
+                sums[s] = sums.get(s, 0.0) + float(avg)
+                cnts[s] = cnts.get(s, 0) + 1
+        return {c: round(sums[c] / cnts[c], 3) for c in sums if cnts[c]}
+    except Exception:
+        return {}
+
+
 # ---------- 산출/이동계획 설정(영구) — 리드·주기·배치·서비스레벨·사전공급 리드 ----------
 SETTINGS_KEY = "calc_settings"
 

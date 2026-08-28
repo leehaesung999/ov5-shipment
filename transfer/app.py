@@ -366,6 +366,39 @@ def parse_location(file, sources):
     return out
 
 
+def parse_wh_current(file, wh="IC930"):
+    """로케이션별 재고조회에서 특정 창고(기본 IC930)의 품목별 현재고(Box) 합계.
+    반환 {코드: 현재고박스}. 헤더에서 'Inventory'·'제품코드'·'현재고(Box)' 자동탐색."""
+    wb = openpyxl.load_workbook(io.BytesIO(file.getvalue()), data_only=True)
+    ws = wb[wb.sheetnames[0]]
+    hdr = [str(ws.cell(1, c).value or "").strip() for c in range(1, ws.max_column + 1)]
+
+    def col(*names):
+        for n in names:
+            if n in hdr:
+                return hdr.index(n) + 1
+        return None
+
+    ic = col("Inventory"); cc = col("제품코드", "품목코드"); bc = col("현재고(Box)")
+    out = {}
+    if ic and cc and bc:
+        for r in range(2, ws.max_row + 1):
+            if str(ws.cell(r, ic).value or "").strip() != wh:
+                continue
+            code = _code(ws.cell(r, cc).value)
+            v = ws.cell(r, bc).value
+            if code and isinstance(v, (int, float)):
+                out[code] = out.get(code, 0) + v
+    wb.close()
+    return out
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def _abc_rate_cached():
+    """ABC 일평균출고(box/일) — Supabase에서 로드(1시간 캐시)."""
+    return store.load_abc_daily_rate()
+
+
 def parse_allocation(file, plan_d):
     """카테고리별 할당 모니터링 시트 → BNF 할당 상한(박스). 시트명 코드 기준.
     각 품목시트에서 'Bnf' 채널 행의 할당량(박스)을 합산. 할당 종료일≥계획일자만 활성.
@@ -587,6 +620,15 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
                                   morning=morning)
         if loc_inv:                              # 창고 배정(로케이션재고)
             T.allocate_warehouse(rows, loc_inv)
+        # 930 가용일수(표시용) = 930 현재고(Box) ÷ ABC 일평균출고(box/일). 계산엔 미반영.
+        wh930_stock = parse_wh_current(up_loc, "IC930") if up_loc else {}
+        abc_rate = _abc_rate_cached()
+        for r in rows:
+            _c = r["품목코드"]; _rt = abc_rate.get(_c); _stk = wh930_stock.get(_c)
+            r["930재고"] = _stk if _stk is not None else ""
+            r["930일평균출고"] = _rt if _rt else ""
+            r["930가용일수"] = (round(_stk / _rt, 1)
+                              if (_rt and _rt > 0 and _stk is not None) else "")
         df = pd.DataFrame(rows)
         buf = io.BytesIO()
         with pd.ExcelWriter(buf, engine="openpyxl") as xw:
