@@ -250,7 +250,7 @@ def _norm_ch(s):
     return str(s or "").replace("[", "").replace("]", "").replace(" ", "").replace("_", "").strip()
 
 
-def parse_events_new(file, plan_d, reflected, bnf_channels=None, presupply_days=7):
+def parse_events_new(file, plan_d, reflected, bnf_channels=None, presupply_days=3):
     """행사 파일 → 신규(미반영) BNF 이벤트만 {코드: 수량}.
     - 0818 형식(헤더에 CHANNEL·ITEM_CODE): BNF 채널만 · END_DATE≥계획일자 · SEQ로 중복방지.
       수량 = SALE_TARGET_QUANTITY, 채널 부분일치(대괄호/공백/언더바 무시).
@@ -487,9 +487,14 @@ st.subheader("2️⃣ 행사 이벤트 (선택)")
 up_evt = st.file_uploader("행사 파일 업로드 (0818 이벤트 형식 / 구 행사양식) — 신규(미반영)만 자동 반영",
                           type=["xlsx"], key="t_evt")
 _bnf_ch = store.load_bnf_channels() or BNF_CHANNELS_DEFAULT
+_saved_presup = int(store.load_calc_settings().get("presupply_days", 3))
 presupply_days = st.number_input("행사 사전공급 리드(일) — 시작일 이만큼 전부터만 반영",
-                                 0, 60, 7, help="예: 7이면 행사 시작 7일 전부터 미리 보냅니다. "
+                                 0, 60, _saved_presup, help="예: 3이면 행사 시작 3일 전부터 미리 보냅니다. "
                                  "시작이 한참 뒤인 행사를 너무 일찍 보내지 않도록 제한.")
+if st.button("💾 사전공급 리드일을 기본값으로 저장 (다음에도 유지)", key="save_presup"):
+    _ok = store.save_calc_settings({"presupply_days": int(presupply_days)})
+    st.success("저장됨 — 다음에도 이 값으로 시작합니다." if _ok
+               else "로컬(Supabase 미설정)에서는 이번 세션만 적용됩니다.")
 st.caption(f"**BNF 거래처만** 필터링해 반영합니다 (네이버·토스 등 제외). "
            f"시작 {presupply_days}일 전부터·안 끝난 행사(END≥계획일자)만 반영합니다. "
            f"벤더를 Max+행사까지 채우므로 **부족분은 다음날 자동 이월**되고 다 채우면 멈춥니다(확정 불필요).")

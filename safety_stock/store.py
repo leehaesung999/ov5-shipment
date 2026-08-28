@@ -252,6 +252,36 @@ def remove_new_item(code) -> bool:
         return False
 
 
+# ---------- 산출/이동계획 설정(영구) — 리드·주기·배치·서비스레벨·사전공급 리드 ----------
+SETTINGS_KEY = "calc_settings"
+
+
+def load_calc_settings() -> dict:
+    """사용자가 저장한 산출 설정(영구). Supabase에 저장된 값만 dict로 반환(없으면 {}).
+    앱에서는 코드 기본값(DEFAULT_SETTINGS/presupply) 위에 이 값을 덮어 사용."""
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", SETTINGS_KEY).execute()
+            if r.data and r.data[0].get("value") is not None:
+                return dict(r.data[0]["value"] or {})
+        except Exception:
+            pass
+    return {}
+
+
+def save_calc_settings(updates: dict) -> bool:
+    """전달된 키만 병합 저장(기존 값 보존). 예: {'lead_time':12} 또는 {'presupply_days':3}."""
+    if not use_supabase():
+        return False
+    try:
+        cur = load_calc_settings()
+        cur.update({k: v for k, v in (updates or {}).items() if v is not None})
+        _sb().table("app_settings").upsert({"key": SETTINGS_KEY, "value": cur}).execute()
+        return True
+    except Exception:
+        return False
+
+
 # ---------- BNF 거래처(행사 CHANNEL) 화이트리스트 ----------
 CHKEY = "bnf_channels"
 BNF_CH_SEED = DATA / "bnf_channels_seed.json"

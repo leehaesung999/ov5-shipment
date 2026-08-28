@@ -25,8 +25,8 @@ from datetime import date, timedelta
 
 # ---------- 설정 기본값 ----------
 DEFAULT_SETTINGS = {
-    "lead_time": 3,      # 리드타임(일)
-    "cycle": 1,          # 발주주기(일)
+    "lead_time": 12,     # 리드타임(일)
+    "cycle": 3,          # 발주주기(일)
     "z": 2.33,           # 서비스레벨 계수 (2.33=99%)
     "batch": 15,         # 발주배치(일)
     "window_months": 12, # 롤링 기간(개월)

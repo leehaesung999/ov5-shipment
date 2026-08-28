@@ -159,14 +159,25 @@ c2.metric("최신 데이터", dmax)
 c3.metric("저장소", "Supabase" if store.use_supabase() else "로컬/세션")
 
 # ---------- 설정 ----------
+_saved_cfg = store.load_calc_settings()   # 영구 저장값(있으면 기본값으로)
+def _cfg(k):
+    return _saved_cfg.get(k, core.DEFAULT_SETTINGS[k])
 with st.expander("⚙️ 설정 (리드타임·발주주기·서비스레벨)", expanded=False):
     cc = st.columns(4)
-    lead = cc[0].number_input("리드타임(일)", 1, 30, core.DEFAULT_SETTINGS["lead_time"])
-    cycle = cc[1].number_input("발주주기(일)", 1, 30, core.DEFAULT_SETTINGS["cycle"])
-    zsel = cc[2].selectbox("서비스레벨", ["99% (2.33)", "98% (2.05)", "95% (1.65)", "99.5% (2.58)"])
-    batch = cc[3].number_input("발주배치(일)", 1, 60, core.DEFAULT_SETTINGS["batch"])
-    z = {"99% (2.33)": 2.33, "98% (2.05)": 2.05, "95% (1.65)": 1.65, "99.5% (2.58)": 2.58}[zsel]
+    lead = cc[0].number_input("리드타임(일)", 1, 30, int(_cfg("lead_time")))
+    cycle = cc[1].number_input("발주주기(일)", 1, 30, int(_cfg("cycle")))
+    _zopts = ["99% (2.33)", "98% (2.05)", "95% (1.65)", "99.5% (2.58)"]
+    _zmap = {"99% (2.33)": 2.33, "98% (2.05)": 2.05, "95% (1.65)": 1.65, "99.5% (2.58)": 2.58}
+    _zidx = next((i for i, o in enumerate(_zopts) if _zmap[o] == _cfg("z")), 0)
+    zsel = cc[2].selectbox("서비스레벨", _zopts, index=_zidx)
+    batch = cc[3].number_input("발주배치(일)", 1, 60, int(_cfg("batch")))
+    z = _zmap[zsel]
     st.caption(f"노출기간 = 리드타임+발주주기 = **{lead+cycle}일**")
+    if st.button("💾 이 설정을 기본값으로 저장 (다음에도 유지)", key="save_calc_cfg"):
+        ok = store.save_calc_settings({"lead_time": int(lead), "cycle": int(cycle),
+                                       "z": float(z), "batch": int(batch)})
+        st.success("저장됨 — 다음에도 이 값으로 시작합니다." if ok
+                   else "로컬(Supabase 미설정)에서는 이번 세션만 적용됩니다.")
 settings = {"lead_time": lead, "cycle": cycle, "z": z, "batch": batch}
 
 # ---------- 품목코드 승계 (입수변경 등으로 코드가 바뀐 경우) ----------
