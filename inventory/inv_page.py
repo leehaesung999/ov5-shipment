@@ -23,6 +23,10 @@ def _now_kst():
     return datetime.now(KST)
 
 
+def _today_kst():
+    return _now_kst().date()
+
+
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))       # 레포 루트 (공용 master_hub)
@@ -448,7 +452,7 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
         # 하프도달 점검(OV5/OV6/비Lock)은 '오늘'이 아니라 실제 입고일(=다음 영업일) 기준으로 판정.
         # 오늘 점검한 재고는 익일(금요일이면 월요일) 입고되므로, 그날 시점의 잔존율로 봐야 한다.
         if any(k in action_keys for k in ("ov5", "ov6", "nonlock")):
-            run_date = st.date_input("실행일(오늘)", value=date.today(),
+            run_date = st.date_input("실행일(오늘)", value=_today_kst(),
                                      help="이 날짜에 점검을 돌린다고 가정합니다.")
             if st.checkbox("입고예정일 직접 지정", value=False,
                            help="자동(다음 영업일)이 아닌 날짜로 점검하려면 체크"):
@@ -461,7 +465,7 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
             st.caption(f"📦 점검 기준 = **입고예정일 {today:%Y-%m-%d}({_wd})** — "
                        f"실행일 {run_date:%Y-%m-%d}의 다음 영업일 · {_hol}")
         else:
-            today = st.date_input("기준일자", value=date.today())
+            today = st.date_input("기준일자", value=_today_kst())
 
     # ---------- 입력 ----------
     st.subheader("① ERP 재고조회 파일 업로드")
@@ -492,7 +496,7 @@ def render(action_keys, title: str, caption: str, preview: bool = False):
         def log(*a):
             logs.append(" ".join(str(x) for x in a))
 
-        op = TMP / f"{out_tag}_{date.today():%Y%m%d}.xlsx"
+        op = TMP / f"{out_tag}_{_today_kst():%Y%m%d}.xlsx"
         thr = float(threshold)
         # 유통기한 함수는 내부에서 datetime과 빼기 → date를 datetime으로 변환
         _today = datetime.combine(today, datetime.min.time()) if isinstance(today, date) else today
