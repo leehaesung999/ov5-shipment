@@ -494,15 +494,15 @@ def _pallet_xlsx(rows, plan_d, only_wh=None):
 st.subheader("1️⃣ 입력 (재고 필수, 나머지 선택)")
 up_stock = st.file_uploader("재고입력 (BNF 상품별재고현황 .xls 그대로 OK / 또는 코드·현재고·할당)",
                             type=["xlsx", "xls"], key="t_stock")
-up_inc = st.file_uploader("📥 입고예정 (표식지/FCJ 형식 PLT 시트) — 이미 이동 중인 물량",
+up_inc = st.file_uploader("📥 이동계획(직전) — 이미 이동 중인 물량 (재고이동계획 파일의 '공유 내용' 시트)",
                           type=["xlsx"], key="t_inc")
 up_morning = st.file_uploader("🌅 오전출고 (직영몰 주문처리 파일) — 오전에 이미 나간 물량 차감",
                               type=["xlsx", "xls"], key="t_morning")
 morning_pw = st.text_input("오전출고 파일 비밀번호 (당일 날짜 MMDD)", value=f"{plan_date:%m%d}",
                            type="password", key="t_morning_pw",
                            help="주문처리 파일이 암호화돼 있어 복호화에 필요합니다. 기본값=계획일자 MMDD.")
-st.caption("**유효현재고 = 현재고 + 입고예정 − 오전출고** 로 발주 판단(이중발주 방지). "
-           "입고예정=표식지(PLT_xx) 예정수량 합산. 오전출고=주문처리 파일 품목수량(EA) 합산.")
+st.caption("**유효현재고 = 현재고 + 이동계획(직전) − 오전출고** 로 발주 판단(이중발주 방지). "
+           "이동계획(직전)=직전 재고이동계획 '공유 내용'의 이동수량(EA). 오전출고=주문처리 파일 품목수량(EA) 합산.")
 up_loc = st.file_uploader("🏬 로케이션별 재고조회 (우리 창고 IC930/920/100) — 창고배정 + 이동량 상한",
                           type=["xlsx"], key="t_loc")
 cap_by_loc = st.checkbox("창고 재고로 이동량 제한 (있는 만큼만 보냄)", value=True,
