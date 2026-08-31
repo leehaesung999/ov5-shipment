@@ -1335,6 +1335,8 @@ def analyze_ov5_expiry(stock_path, master_path, output_path,
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     today = today or datetime.today()
+    if not isinstance(today, datetime):  # date → datetime 승격 (exp가 datetime이라 뺄셈 호환)
+        today = datetime.combine(today, datetime.min.time())
 
     log(f"재고 파일 로드: {stock_path.name}")
     records = load_stock(stock_path)
@@ -1390,6 +1392,8 @@ def analyze_ov6_expiry(stock_path, master_path, output_path,
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     today = today or datetime.today()
+    if not isinstance(today, datetime):  # date → datetime 승격 (exp가 datetime이라 뺄셈 호환)
+        today = datetime.combine(today, datetime.min.time())
 
     log(f"재고 파일 로드: {stock_path.name}")
     records = load_stock(stock_path)
@@ -1446,6 +1450,8 @@ def analyze_nonlock_expiry(stock_path, master_path, output_path,
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
     today = today or datetime.today()
+    if not isinstance(today, datetime):  # date → datetime 승격 (exp가 datetime이라 뺄셈 호환)
+        today = datetime.combine(today, datetime.min.time())
 
     log(f"재고 파일 로드: {stock_path.name}")
     records = load_stock(stock_path)
