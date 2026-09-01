@@ -11,6 +11,19 @@ import json
 import re
 import base64
 from datetime import date, timedelta
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
 from pathlib import Path
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
@@ -602,7 +615,7 @@ if uploaded:
             sel_whs = _whs_all
         scope_map = load_scopes()
         abc_avg, abc_months = load_abc_daily_avg(3)
-        _today = date.today()
+        _today = _today_kst()
         with st.spinner("분석 중..."):
             rows = []
             for wh in sel_whs:
@@ -699,7 +712,7 @@ if uploaded:
             st.download_button(
                 "📥 결과 엑셀 다운로드",
                 build_result_xlsx(view_df),
-                f"유통기한모니터_{date.today():%Y%m%d}.xlsx",
+                f"유통기한모니터_{_today_kst():%Y%m%d}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 width='stretch')
 

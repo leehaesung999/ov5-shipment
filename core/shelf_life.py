@@ -1,4 +1,17 @@
 from datetime import date, datetime
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
 from typing import Optional
 
 DAYS_PER_MONTH = 30.4
@@ -28,7 +41,7 @@ def calc_remaining_rate(consume_ymd, months: int, today: Optional[date] = None) 
     end = parse_ymd(consume_ymd)
     if end is None or not months:
         return None
-    today = today or date.today()
+    today = today or _today_kst()
     return (end - today).days / (months * DAYS_PER_MONTH)
 
 

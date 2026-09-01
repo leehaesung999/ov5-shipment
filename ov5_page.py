@@ -12,6 +12,19 @@ import io
 import json
 import sys
 from datetime import date
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
 from pathlib import Path
 
 import pandas as pd
@@ -319,7 +332,7 @@ with st.sidebar.expander("⚙️ 설정 / 기준정보 — 클릭해서 열기",
         options=["OV1", "OV4", "OV5", "OV6"],
         default=settings.get("ov_locations", ["OV5"]))
 
-    today = st.date_input("기준일자 (오늘)", value=date.today())
+    today = st.date_input("기준일자 (오늘)", value=_today_kst())
 
     if st.button("💾 설정 저장", width='stretch'):
         save_settings(settings)

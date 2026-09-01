@@ -12,6 +12,19 @@ import io
 import math
 import sys
 from datetime import datetime
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
 from pathlib import Path
 
 import pandas as pd
@@ -146,7 +159,7 @@ def build_xlsx(by_date, detail, unmatched, qty_col) -> bytes:
                    int(by_date["건수"].sum()) if len(by_date) else 0,
                    int(by_date["파레트"].sum()) if len(by_date) else 0,
                    qty_col, len(unmatched),
-                   datetime.now().strftime("%Y-%m-%d %H:%M:%S")],
+                   _now_kst().strftime("%Y-%m-%d %H:%M:%S")],
         })
         summary.to_excel(w, sheet_name="요약", index=False)
         by_date.to_excel(w, sheet_name="날짜별", index=False)
@@ -226,6 +239,6 @@ with st.expander("날짜×품목 상세 보기"):
 st.download_button(
     "📥 집계 결과 Excel 다운로드",
     build_xlsx(by_date, detail, unmatched, qty_col),
-    file_name=f"월입고집계_{datetime.now():%Y%m%d}.xlsx",
+    file_name=f"월입고집계_{_now_kst_naive():%Y%m%d}.xlsx",
     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     width='stretch')

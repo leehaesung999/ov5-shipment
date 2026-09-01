@@ -1,5 +1,18 @@
 import re
 from datetime import date
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
 from typing import Optional
 import pandas as pd
 
@@ -148,7 +161,7 @@ def match(stocks: pd.DataFrame, orders: pd.DataFrame, *,
     # fs_ms_items / excluded_nh_keywords 는 backward compat
     _ = (fs_ms_items, excluded_nh_keywords)
     lot_assignments = lot_assignments or {}
-    today = today or date.today()
+    today = today or _today_kst()
     nh_branches = dict(nh_branches or DEFAULT_NH_BRANCHES)
     nh_cols = build_nh_cols(nh_branches)
     pool = _build_order_pool(orders, nh_branches)

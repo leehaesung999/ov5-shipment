@@ -24,6 +24,19 @@ from datetime import date, datetime
 try:
     KST  # noqa: F821
 except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
     from datetime import timedelta as _td, timezone as _tz
     KST = _tz(_td(hours=9))
     def _now_kst():
@@ -465,7 +478,7 @@ item_names, item_months, item_up = load_items()
 
 with st.sidebar:
     st.header('⚙️ 설정')
-    base_day = st.date_input('기준일 (잔존율 계산 기준)', value=date.today())
+    base_day = st.date_input('기준일 (잔존율 계산 기준)', value=_today_kst())
     st.caption('잔존율 = (소비기한 − 기준일) ÷ (소비기한 − 제조일)')
     st.caption('※ 50%(하프도달)는 전 거래처 공통이라 판정에서 항상 제외됩니다.')
     st.divider()

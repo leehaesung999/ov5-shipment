@@ -18,6 +18,19 @@ from datetime import datetime, date, time as dtime
 try:
     KST  # noqa: F821
 except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
     from datetime import timedelta as _td, timezone as _tz
     KST = _tz(_td(hours=9))
     def _now_kst():
@@ -1198,7 +1211,7 @@ fcj_header = None
 with st.expander('📤 출력 정보 · 바코드 마스터', expanded=True):
     if output_mode.startswith('FCJ'):
         st.markdown('**피킹 정보**')
-        fcj_date = st.date_input('피킹/입고예정 일자 (피킹지 제목)', value=date.today())
+        fcj_date = st.date_input('피킹/입고예정 일자 (피킹지 제목)', value=_today_kst())
         fcj_header = {'date': fcj_date}
 
         st.divider()

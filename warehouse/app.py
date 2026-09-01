@@ -9,6 +9,19 @@ from __future__ import annotations
 import io
 import sys
 from datetime import date
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
 from pathlib import Path
 
 import pandas as pd
@@ -125,7 +138,7 @@ if pasted.strip():
         st.warning(f"붙여넣기 파싱 실패: {e}")
 
 # ---------- 판정 + 잔존% ----------
-today = date.today()
+today = _today_kst()
 pivot[cc.VERDICT_COL] = pivot.apply(lambda r: cc.verdict_row(r, warehouses, extra), axis=1)
 pivot["_ratio"] = pivot.apply(lambda r: cc.row_min_ratio(r, warehouses, master, today), axis=1)
 if master:

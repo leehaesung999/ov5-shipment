@@ -10,6 +10,19 @@ from datetime import datetime, date, timedelta
 try:
     KST  # noqa: F821
 except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
     from datetime import timedelta as _td, timezone as _tz
     KST = _tz(_td(hours=9))
     def _now_kst():
@@ -311,7 +324,7 @@ def write_보충오류_sheet(wb, rows):
     widths = [12, 10, 24, 11, 6, 6, 8, 3, 8, 6, 14]
 
     # 1행: 날짜/시간 (원본 양식)
-    ws.cell(row=1, column=1, value=datetime.today().strftime("%Y-%m-%d"))
+    ws.cell(row=1, column=1, value=_now_kst_naive().strftime("%Y-%m-%d"))
     ws.cell(row=1, column=5, value=_now_kst().strftime("%Y-%m-%d %H:%M"))
 
     # 2행: 헤더
@@ -531,7 +544,7 @@ def write_재고지_1단_from_template(rows, output_path, highlight_set=None,
     row_style = [ws.cell(row=3, column=c) for c in range(1, cols + 1)]
 
     # 1행 날짜/시간 갱신 (원본은 =TODAY()/=NOW() 수식)
-    ws.cell(row=1, column=1, value=datetime.today())
+    ws.cell(row=1, column=1, value=_now_kst_naive())
     ws.cell(row=1, column=1).number_format = "yyyy-mm-dd"
     ws.cell(row=1, column=7, value=_now_kst_naive())
     ws.cell(row=1, column=7).number_format = "yyyy-mm-dd hh:mm"
@@ -754,7 +767,7 @@ def write_재고지_1단_전체_from_template(rows, output_path, template_path=N
     row_style = [ws.cell(row=3, column=c) for c in range(1, cols + 1)]
 
     # 1행 날짜/시간
-    ws.cell(row=1, column=1, value=datetime.today())
+    ws.cell(row=1, column=1, value=_now_kst_naive())
     ws.cell(row=1, column=1).number_format = "yyyy-mm-dd"
     ws.cell(row=1, column=6, value=_now_kst_naive())
     ws.cell(row=1, column=6).number_format = "yyyy-mm-dd hh:mm"
@@ -983,7 +996,7 @@ def write_재고지_단별_from_template(rows_by_단, output_path, template_path
         #   헤더(2,3행)과 비슷한 테두리를 수동 적용하는 게 안전.
 
         # 1행 날짜/시간
-        ws.cell(row=1, column=1, value=datetime.today())
+        ws.cell(row=1, column=1, value=_now_kst_naive())
         ws.cell(row=1, column=1).number_format = "yyyy-mm-dd"
         ws.cell(row=1, column=6, value=_now_kst_naive())
         ws.cell(row=1, column=6).number_format = "yyyy-mm-dd hh:mm"
@@ -1334,7 +1347,7 @@ def analyze_ov5_expiry(stock_path, master_path, output_path,
     stock_path = Path(stock_path)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    today = today or datetime.today()
+    today = today or _now_kst_naive()
     if not isinstance(today, datetime):  # date → datetime 승격 (exp가 datetime이라 뺄셈 호환)
         today = datetime.combine(today, datetime.min.time())
 
@@ -1391,7 +1404,7 @@ def analyze_ov6_expiry(stock_path, master_path, output_path,
     stock_path = Path(stock_path)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    today = today or datetime.today()
+    today = today or _now_kst_naive()
     if not isinstance(today, datetime):  # date → datetime 승격 (exp가 datetime이라 뺄셈 호환)
         today = datetime.combine(today, datetime.min.time())
 
@@ -1449,7 +1462,7 @@ def analyze_nonlock_expiry(stock_path, master_path, output_path,
     stock_path = Path(stock_path)
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    today = today or datetime.today()
+    today = today or _now_kst_naive()
     if not isinstance(today, datetime):  # date → datetime 승격 (exp가 datetime이라 뺄셈 호환)
         today = datetime.combine(today, datetime.min.time())
 

@@ -11,6 +11,19 @@ import contextlib
 import io
 import sys
 from datetime import date
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
 from pathlib import Path
 
 import streamlit as st
@@ -51,7 +64,7 @@ if not up:
 
 src = TMP / "_src.xlsx"
 src.write_bytes(up.getvalue())
-dst = TMP / f"락_{date.today():%Y%m%d}.xlsx"
+dst = TMP / f"락_{_today_kst():%Y%m%d}.xlsx"
 
 buf = io.StringIO()
 try:

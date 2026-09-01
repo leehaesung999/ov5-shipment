@@ -7,6 +7,19 @@ import subprocess
 import sys
 import threading
 from datetime import date
+# --- KST (Streamlit Cloud는 UTC 기본) ---
+try:
+    KST  # noqa: F821
+except NameError:
+    from datetime import datetime as _dt, timedelta as _td, timezone as _tz
+    KST = _tz(_td(hours=9))
+    def _now_kst():
+        return _dt.now(KST)
+    def _now_kst_naive():
+        return _dt.now(KST).replace(tzinfo=None)
+    def _today_kst():
+        return _dt.now(KST).date()
+
 from pathlib import Path
 from tkinter import (
     BooleanVar, DoubleVar, StringVar, Tk, filedialog, messagebox,
@@ -295,7 +308,7 @@ class App:
                 stocks, orders,
                 shelf_life_map=shelf_map, fs_ms_items=fs_ms,
                 lot_assignments=lots,
-                today=date.today(),
+                today=_today_kst(),
                 threshold=float(self.settings["threshold"]),
                 nh_branches=self.settings["nh_branch_keywords"],
                 excluded_nh_keywords=excluded,
