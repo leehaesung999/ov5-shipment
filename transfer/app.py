@@ -115,9 +115,9 @@ def parse_avail(file):
 
 
 def parse_incoming(file):
-    """입고예정: 우선순위 ① 이동계획 결과의 '공유 내용' 시트(품목코드+이동수량EA),
-    ② 표식지/FCJ 형식 **PLT_xx 시트들**(품목코드·예정수량), ③ 구 양식(A=코드,E=낱개).
-    이동계획 파일을 그대로 올리면 '공유 내용'의 이동수량이 입고예정이 됨(이미 이동하기로 한 물량).
+    """입고예정: 우선순위 ① 이동계획 '공유 내용'(품목코드+이동수량EA),
+    ② 피킹지 '최종' 시트(품목코드+박스 × 입수(허브)), ③ 표식지 PLT_xx, ④ 구 양식.
+    이동계획 파일이든 피킹지 파일이든 올리면 이동 중 물량이 입고예정으로 반영됨.
     반환 {품목코드: 입고예정 낱개(EA)}."""
     wb = openpyxl.load_workbook(io.BytesIO(file.getvalue()), data_only=True)
     plt_sheets = [s for s in wb.sheetnames if str(s).upper().startswith("PLT")]
@@ -148,6 +148,52 @@ def parse_incoming(file):
                     out[code] = out.get(code, 0) + ea
             wb.close()
             return out
+
+    # ② 피킹지 파일 — '최종' 시트(없으면 창고별 피킹시트), 품목코드+박스 × 입수(허브)
+    pick_sheets = ["최종"] if "최종" in wb.sheetnames else []
+    if not pick_sheets:
+        for sn in wb.sheetnames:
+            if str(sn).strip() == "요약" or str(sn).upper().startswith("PLT"):
+                continue                            # 요약·표식지(PLT) 시트 제외
+            wsx = wb[sn]
+            for rr in range(1, min(4, wsx.max_row + 1)):
+                vals = [str(wsx.cell(rr, c).value or "").strip() for c in range(1, wsx.max_column + 1)]
+                if "품목코드" in vals and "박스" in vals and "팔레트" in vals:
+                    pick_sheets.append(sn)
+                    break
+    if pick_sheets:
+        try:
+            from master_hub import store as _hub
+            ipsu = _hub.ipsu_map()
+        except Exception:
+            ipsu = {}
+        for sn in pick_sheets:
+            ws = wb[sn]
+            hrow = None
+            for rr in range(1, min(5, ws.max_row + 1)):
+                vals = [str(ws.cell(rr, c).value or "").strip() for c in range(1, ws.max_column + 1)]
+                if "품목코드" in vals and "박스" in vals:
+                    hrow = rr
+                    break
+            if hrow is None:
+                continue
+            hdr = [str(ws.cell(hrow, c).value or "").strip() for c in range(1, ws.max_column + 1)]
+            ci = _hcol(hdr, "품목코드"); bi = _hcol(hdr, "박스")
+            for rr in range(hrow + 1, ws.max_row + 1):
+                code = _code(ws.cell(rr, ci).value) if ci else None
+                if not code or not (code.isdigit() or code.startswith("P")):
+                    continue
+                box = _num(ws.cell(rr, bi).value) if bi else None
+                if not box:
+                    continue
+                try:
+                    icode = int(float(code))
+                except (TypeError, ValueError):
+                    icode = None
+                ip = ipsu.get(icode) or 1
+                out[code] = out.get(code, 0) + box * ip
+        wb.close()
+        return out
 
     if plt_sheets:
         for sn in plt_sheets:
@@ -494,7 +540,7 @@ def _pallet_xlsx(rows, plan_d, only_wh=None):
 st.subheader("1️⃣ 입력 (재고 필수, 나머지 선택)")
 up_stock = st.file_uploader("재고입력 (BNF 상품별재고현황 .xls 그대로 OK / 또는 코드·현재고·할당)",
                             type=["xlsx", "xls"], key="t_stock")
-up_inc = st.file_uploader("📥 이동계획(직전) — 이미 이동 중인 물량 (재고이동계획 파일의 '공유 내용' 시트)",
+up_inc = st.file_uploader("📥 이동계획(직전) — 이미 이동 중인 물량 (재고이동계획 '공유 내용' 또는 피킹지 파일)",
                           type=["xlsx"], key="t_inc")
 up_morning = st.file_uploader("🌅 오전출고 (직영몰 주문처리 파일) — 오전에 이미 나간 물량 차감",
                               type=["xlsx", "xls"], key="t_morning")
