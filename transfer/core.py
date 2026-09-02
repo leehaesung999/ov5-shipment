@@ -22,9 +22,10 @@ import math
 INF = 9e15
 
 # ── 발주 단위 규칙 (여기서 조정) ────────────────────────────────────
-MIN_ORDER_BOX = 5          # 발주 시 최소 박스
-ORDER_STEP_BOX = 5         # 5의 배수로 올림
-PALLET_ROUNDUP_FRAC = 0.7  # 남는 양이 파레트의 0.7 이상이면 다음 파레트로 올림
+MIN_ORDER_BOX = 5              # 발주 시 최소 박스 (재고 있음: 유효현재고>0)
+MIN_ORDER_BOX_DEPLETED = 10    # 소진(유효현재고 0 이하)일 때 최소 박스
+ORDER_STEP_BOX = 5             # 5의 배수로 올림
+PALLET_ROUNDUP_FRAC = 0.7      # 남는 양이 파레트의 0.7 이상이면 다음 파레트로 올림
 
 
 def _round_order(box, plt):
@@ -106,7 +107,13 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
         # 발주 단위 보정: 최소 5박스·5의 배수·0.7파레트↑이면 파레트 단위.
         # 단, 할당(채널 배정량)이 있는 품목은 라운딩하지 않음 — 배정량 초과·과소진 방지.
         요청_박스_raw = math.ceil(요청_ea / ip)
-        요청_박스 = 요청_박스_raw if alloc is not None else _round_order(요청_박스_raw, plt)
+        if alloc is not None:
+            요청_박스 = 요청_박스_raw
+        else:
+            요청_박스 = _round_order(요청_박스_raw, plt)
+            # 소진(유효현재고 0 이하)이면 최소 발주를 10박스로 상향(재고 있으면 5박스 유지)
+            if 요청_박스 > 0 and eff_cur <= 0:
+                요청_박스 = max(요청_박스, MIN_ORDER_BOX_DEPLETED)
 
         # 출고가능_박스: avail None=무제한 / dict에 없으면 0
         if avail is None:
