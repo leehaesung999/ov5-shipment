@@ -26,6 +26,7 @@ MIN_ORDER_BOX = 5              # 발주 시 최소 박스 (재고 있음: 유효
 MIN_ORDER_BOX_DEPLETED = 10    # 소진(유효현재고 0 이하)일 때 최소 박스
 ORDER_STEP_BOX = 5             # 5의 배수로 올림
 PALLET_ROUNDUP_FRAC = 0.7      # 남는 양이 파레트의 0.7 이상이면 다음 파레트로 올림
+SKIP_TIER = (20, 30)          # 이 사이 발주(20 초과~30 미만=25박스)는 30박스로 올림
 
 
 def _round_order(box, plt):
@@ -40,7 +41,13 @@ def _round_order(box, plt):
     """
     if not box or box <= 0:
         return 0
-    step = lambda x: max(MIN_ORDER_BOX, math.ceil(x / ORDER_STEP_BOX) * ORDER_STEP_BOX)
+
+    def step(x):
+        v = max(MIN_ORDER_BOX, math.ceil(x / ORDER_STEP_BOX) * ORDER_STEP_BOX)
+        if SKIP_TIER[0] < v < SKIP_TIER[1]:    # 25박스 구간 제거 → 30으로
+            v = SKIP_TIER[1]
+        return v
+
     if not plt or plt <= 0:
         return step(box)
     full = int(box // plt)               # 꽉 채운 파레트 수

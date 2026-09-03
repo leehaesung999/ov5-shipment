@@ -1150,8 +1150,17 @@ except Exception:
 st.title('📦 BNF(비네이버) 피킹지')
 st.caption('입고예정/이동계획(공유 내용) Excel을 올리면 파레트 단위로 자동 구분해 창고별 피킹지를 만듭니다.')
 
+# 피킹 기준값 영구 저장값(있으면 기본값으로) — 다음에도 유지
+try:
+    from safety_stock import store as _ss_store
+    _saved_pcfg = _ss_store.load_pallet_cfg()
+except Exception:
+    _ss_store = None
+    _saved_pcfg = {}
+_base_cfg = {**DEFAULTS, **{k: _saved_pcfg[k] for k in DEFAULTS if k in _saved_pcfg}}
+
 with st.expander('🎛 피킹 기준값 설정 (박스 분류·파레트 상한)', expanded=False):
-    st.caption('변경하면 즉시 재계산됩니다.')
+    st.caption('변경하면 즉시 재계산됩니다. 아래 저장 버튼을 누르면 다음에도 유지됩니다.')
 
     if st.button('🔄 기본값으로 되돌리기', use_container_width=True):
         for k, v in DEFAULTS.items():
@@ -1159,29 +1168,29 @@ with st.expander('🎛 피킹 기준값 설정 (박스 분류·파레트 상한)
 
     small_max = st.number_input(
         '소형 박스 기준 (이 값 이하)', min_value=1, max_value=100,
-        value=st.session_state.get('small_max', DEFAULTS['small_max']),
+        value=st.session_state.get('small_max', _base_cfg['small_max']),
         step=1, key='small_max',
         help='이 박스 수 이하인 품목은 소형으로 분류됩니다.',
     )
     medium_max = st.number_input(
         '중형 박스 기준 (이 값 이하)', min_value=int(small_max) + 1, max_value=1000,
-        value=max(st.session_state.get('medium_max', DEFAULTS['medium_max']), int(small_max) + 1),
+        value=max(st.session_state.get('medium_max', _base_cfg['medium_max']), int(small_max) + 1),
         step=1, key='medium_max',
         help='소형 기준 초과 ~ 이 값 이하는 중형. 이 값을 초과하면 단독 파레트(대형).',
     )
     small_cap = st.number_input(
         '소형 파레트당 최대 품목 수', min_value=1, max_value=50,
-        value=st.session_state.get('small_cap', DEFAULTS['small_cap']),
+        value=st.session_state.get('small_cap', _base_cfg['small_cap']),
         step=1, key='small_cap',
     )
     medium_cap = st.number_input(
         '중형 파레트당 최대 품목 수', min_value=1, max_value=20,
-        value=st.session_state.get('medium_cap', DEFAULTS['medium_cap']),
+        value=st.session_state.get('medium_cap', _base_cfg['medium_cap']),
         step=1, key='medium_cap',
     )
     plt_sum_max = st.number_input(
         'Plt_1차 합 상한 (절대 기준)', min_value=0.1, max_value=2.0,
-        value=float(st.session_state.get('plt_sum_max', DEFAULTS['plt_sum_max'])),
+        value=float(st.session_state.get('plt_sum_max', _base_cfg['plt_sum_max'])),
         step=0.05, format='%.2f', key='plt_sum_max',
     )
 
@@ -1192,6 +1201,11 @@ with st.expander('🎛 피킹 기준값 설정 (박스 분류·파레트 상한)
         'medium_cap': int(medium_cap),
         'plt_sum_max': float(plt_sum_max),
     }
+
+    if st.button('💾 이 기준값을 기본으로 저장 (다음에도 유지)', use_container_width=True, key='save_pcfg'):
+        _ok = _ss_store.save_pallet_cfg(cfg) if _ss_store else False
+        st.success('저장됨 — 다음에도 이 기준값으로 시작합니다.' if _ok
+                   else '로컬(Supabase 미설정)에서는 이번 세션만 적용됩니다.')
 
     st.divider()
     st.markdown(f"""

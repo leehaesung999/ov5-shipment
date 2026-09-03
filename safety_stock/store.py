@@ -325,6 +325,33 @@ def save_calc_settings(updates: dict) -> bool:
         return False
 
 
+# ---------- 피킹지(파레트 구분기) 기준값 영구 저장 ----------
+PALLET_CFG_KEY = "pallet_cfg"
+
+
+def load_pallet_cfg() -> dict:
+    """피킹 기준값(small_max·medium_max·small_cap·medium_cap·plt_sum_max) 저장값. 없으면 {}."""
+    if use_supabase():
+        try:
+            r = _sb().table("app_settings").select("value").eq("key", PALLET_CFG_KEY).execute()
+            if r.data and r.data[0].get("value") is not None:
+                return dict(r.data[0]["value"] or {})
+        except Exception:
+            pass
+    return {}
+
+
+def save_pallet_cfg(cfg: dict) -> bool:
+    if not use_supabase():
+        return False
+    try:
+        _sb().table("app_settings").upsert(
+            {"key": PALLET_CFG_KEY, "value": dict(cfg or {})}).execute()
+        return True
+    except Exception:
+        return False
+
+
 # ---------- BNF 거래처(행사 CHANNEL) 화이트리스트 ----------
 CHKEY = "bnf_channels"
 BNF_CH_SEED = DATA / "bnf_channels_seed.json"
