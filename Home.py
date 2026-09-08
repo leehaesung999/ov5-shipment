@@ -97,6 +97,9 @@ st.sidebar.link_button("🔗 통합 일일 재고",
 st.sidebar.link_button("🔗 OEM입고 계획",
                        "https://goalkii.pythonanywhere.com/",
                        width='stretch')
+st.sidebar.link_button("🔗 거래명세서 관리",
+                       "https://sempio.pythonanywhere.com/",
+                       width='stretch')
 st.sidebar.link_button("🔗 배차파트 업무 창",
                        "https://sampyo-shipment-hkdmdboz3qwiysgcozwchd.streamlit.app/",
                        width='stretch')
