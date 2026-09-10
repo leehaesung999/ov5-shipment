@@ -30,6 +30,7 @@ if not baseline:
     st.stop()
 
 lead = int((bmeta.get("설정") or {}).get("lead_time", 3))
+cycle = int((bmeta.get("설정") or {}).get("cycle", 3))   # 발주주기 → 발주점 계산에 사용
 plan_date = st.date_input("계획일자 (행사 프리쉽 기준)", value=datetime.now(KST).date())
 
 
@@ -663,7 +664,7 @@ if st.button("🚚 이동계획 산출", type="primary", disabled=up_stock is No
 
         rows = T.compute_transfer(baseline, stock, avail, incoming, events, ended,
                                   plan_month=plan_date.month, cap_reason=cap_reason,
-                                  morning=morning)
+                                  morning=morning, cycle=cycle)
         if loc_inv:                              # 창고 배정(로케이션재고)
             T.allocate_warehouse(rows, loc_inv)
         # 930 가용일수(표시용) = 930 현재고(Box) ÷ ABC 일평균출고(box/일). 계산엔 미반영.

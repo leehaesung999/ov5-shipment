@@ -60,24 +60,26 @@ def _round_order(box, plt):
 
 
 def _season(b, plan_month):
-    """계획월의 계절 프로파일(mn,mx,ss) 반환. months 없으면 연 고정값 폴백.
-    months 키는 JSON 저장으로 문자열('1'~'12')일 수 있어 양쪽 조회."""
+    """계획월의 계절 프로파일(mn,mx,ss,rate) 반환. months 없으면 연 고정값 폴백.
+    months 키는 JSON 저장으로 문자열('1'~'12')일 수 있어 양쪽 조회.
+    rate(일평균)는 발주점 = Min + 일평균×발주주기 계산에 사용(계절 반영)."""
     if plan_month:
         mp = b.get("months")
         if mp:
             mm = mp.get(str(plan_month)) or mp.get(plan_month)
             if mm:
-                return mm.get("mn"), mm.get("mx"), mm.get("ss")
-    return b.get("mn"), b.get("mx"), b.get("ss")
+                return mm.get("mn"), mm.get("mx"), mm.get("ss"), mm.get("rate")
+    return b.get("mn"), b.get("mx"), b.get("ss"), b.get("rate")
 
 
 def compute_transfer(baseline, stock, avail=None, incoming=None,
                      events=None, ended=None, plan_month=None,
-                     cap_reason="출고가능제한", morning=None):
+                     cap_reason="출고가능제한", morning=None, cycle=3):
     """avail = 보낼 수 있는 상한(Box) {코드:박스}. 로케이션(우리 창고) 합계를 넘기면
     창고에 있는 만큼만 이동. avail에 없는 코드는 0(=창고재고 없음→이동0).
     cap_reason: avail 제한으로 못 채울 때의 사유(창고재고면 '창고재고부족').
-    morning = 오전출고 {코드:EA} — 유효현재고에서 차감(오전에 이미 나간 물량)."""
+    morning = 오전출고 {코드:EA} — 유효현재고에서 차감(오전에 이미 나간 물량).
+    cycle = 발주주기(일). 발주점 = Min + 일평균×발주주기 (리드+리뷰 기간 수요 확보)."""
     stock = stock or {}
     incoming = incoming or {}
     events = events or {}
@@ -87,7 +89,7 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
     for code, b in baseline.items():
         ip = b.get("ip") or 1
         plt = b.get("plt")
-        mn, mx, ss_m = _season(b, plan_month)   # 계절(계획월) 기준
+        mn, mx, ss_m, rate_m = _season(b, plan_month)   # 계절(계획월) 기준
         s = stock.get(code, {})
         cur = s.get("cur")
         alloc = s.get("alloc")
@@ -103,9 +105,10 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
 
         # 유효현재고 = 현재고 + 입고예정 − 오전출고. 이 합계로 발주 판단.
         eff_cur = cur + inc - mo
-        # 발주점 = 안전재고(SS). 유효현재고 <= SS 일 때 발주(==SS면 발주함).
-        ss_re = ss_m or 0
-        정상보충 = max(mx - eff_cur, 0) if eff_cur <= ss_re else 0
+        # 발주점 = Min + 일평균×발주주기 = 안전재고 + (리드+발주주기)일치 수요.
+        #   유효현재고가 여기 도달하면 발주 → 리드·리뷰(주3회 등) 기간 수요 미리 확보.
+        rop = (mn or 0) + math.ceil((rate_m or 0) * cycle)
+        정상보충 = max(mx - eff_cur, 0) if eff_cur <= rop else 0
         if evt > 0:
             # 행사: 벤더를 (Max+행사)까지 채움 — 유효현재고 반영(부족분 자동이월)
             요청_ea = max((mx + evt) - eff_cur, 0)
@@ -142,27 +145,27 @@ def compute_transfer(baseline, stock, avail=None, incoming=None,
         elif 이동_박스 < 요청_박스:
             사유 = "할당제한" if al_box <= av_box else cap_reason
         elif 정상보충 > 0 and evt > 0:
-            사유 = "안전재고미달+이벤트"
+            사유 = "발주점도달+이벤트"
         elif evt > 0:
             사유 = "이벤트"
         elif 정상보충 > 0:
-            사유 = "안전재고미달"
+            사유 = "발주점도달"
         else:
             사유 = "충분"
 
         rows.append(_row(code, b, ip, plt, cur, mn, mx, 요청_박스, evt, inc,
                          (None if av_box >= INF else av_box), alloc,
-                         이동가능_박스, 이동_박스, 미충족_박스, 사유, ss_eff=ss_m, mo=mo))
-    # 정렬: 종료 최하 → 미충족 → 이벤트 → 안전재고미달 → 나머지 → 미입력 최하
-    order = {"할당제한": 0, "출고가능제한": 0, "창고재고부족": 0, "안전재고미달+이벤트": 1,
-             "안전재고미달": 2, "이벤트": 3, "충분": 8, "종료(제외)": 9, "미입력": 9}
+                         이동가능_박스, 이동_박스, 미충족_박스, 사유, ss_eff=ss_m, mo=mo, rop=rop))
+    # 정렬: 종료 최하 → 미충족 → 이벤트 → 발주점도달 → 나머지 → 미입력 최하
+    order = {"할당제한": 0, "출고가능제한": 0, "창고재고부족": 0, "발주점도달+이벤트": 1,
+             "발주점도달": 2, "이벤트": 3, "충분": 8, "종료(제외)": 9, "미입력": 9}
     rows.sort(key=lambda r: (order.get(r["사유"], 5),
                              -(r["★이동_박스"] if isinstance(r["★이동_박스"], (int, float)) else 0)))
     return rows
 
 
 def _row(code, b, ip, plt, cur, mn, mx, req, evt, inc, av, alloc, movable,
-         move_box, short_box, reason, ss_eff=None, mo=0):
+         move_box, short_box, reason, ss_eff=None, mo=0, rop=None):
     move_ea = (move_box * ip) if move_box else 0
     # 소진경고: 현재고가 안전재고(SS) 밑으로 = 예상보다 빨리 소진(행사 초과 등).
     #   보충은 매일 Max까지 따라가지만, 리드타임(수일) 동안은 SS가 완충. SS를
@@ -187,6 +190,7 @@ def _row(code, b, ip, plt, cur, mn, mx, req, evt, inc, av, alloc, movable,
         "유효현재고": eff if eff is not None else "",
         "안전재고": ss,
         "Min": mn,
+        "발주점": rop if rop is not None else "",
         "Max": mx,
         "이벤트": evt or "",
         "입고예정": inc or "",
