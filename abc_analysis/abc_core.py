@@ -120,8 +120,11 @@ def classify_abc(avg_df, master_df, ref_year, ref_month):
     df['품명'] = df['품명_m'].fillna(df['품명'])
     df = df.drop(columns=['품명_m'])
 
-    # 하대 없으면 1 (팔레트 환산 불가 → 박스/일 그대로)
-    df['하대(박스/팔레트)'] = df['하대(박스/팔레트)'].fillna(1).replace(0, 1)
+    # 하대(박스/팔레트): 결측/0/음수는 팔레트 환산 불가 → NaN 유지.
+    # (예전엔 1로 채워 팔레트/일이 폭증 → 2슬롯 오탐·히트맵 빨강 오염)
+    df['하대(박스/팔레트)'] = pd.to_numeric(df['하대(박스/팔레트)'], errors='coerce')
+    df['하대출처'] = np.where(df['하대(박스/팔레트)'] > 0, 'master', 'missing')
+    df.loc[~(df['하대(박스/팔레트)'] > 0), '하대(박스/팔레트)'] = np.nan
 
     # ABC
     df = df.sort_values('연평균', ascending=False).reset_index(drop=True)
@@ -161,7 +164,7 @@ def classify_abc(avg_df, master_df, ref_year, ref_month):
     cols = ['순위', '품번', '품명', 'ABC', '신제품', '출시월', '기간구분', '데이터월수',
             '누적비율', '출고비중',
             '연평균', '하절기일평균', '동절기일평균',
-            '하대(박스/팔레트)',
+            '하대(박스/팔레트)', '하대출처',
             '연팔레트일', '하절기팔레트일', '동절기팔레트일',
             '현재로케', '2슬롯연', '2슬롯하절기', '2슬롯동절기',
             '하절기출처', '동절기출처']
@@ -179,6 +182,16 @@ def _normalize_code(s):
          .str.replace(r'\.0+$', '', regex=True)
          .str.replace(r'^nan$', '', regex=True)
     )
+
+
+def _find_duplicate_locations(abc_df):
+    """같은 '현재로케'에 2품목 이상 배정된 (파싱 가능한) 로케 코드 목록."""
+    if '현재로케' not in abc_df.columns:
+        return []
+    s = abc_df['현재로케'].dropna().astype(str).str.strip()
+    s = s[s.apply(lambda x: parse_location(x)[0] is not None)]
+    vc = s.value_counts()
+    return sorted(vc[vc > 1].index.tolist())
 
 
 _LOC_RE = re.compile(r'^([A-Z]\d+)-(\d+)-(\d+)$')
@@ -399,6 +412,30 @@ def write_summary(ws, abc_df, ref_year, ref_month, n_months_avail):
     ws.cell(row=22, column=1, value='-- 동절기 데이터 출처 --').font = Font(bold=True)
     ws.cell(row=23, column=1, value='actual');          ws.cell(row=23, column=2, value=int((abc_df['동절기출처']=='actual').sum()))
     ws.cell(row=24, column=1, value='annual_fallback'); ws.cell(row=24, column=2, value=int((abc_df['동절기출처']=='annual_fallback').sum()))
+
+    # 하대(박스/팔레트) 등록 상태
+    ws.cell(row=26, column=1, value='-- 하대(박스/팔레트) --').font = Font(bold=True)
+    if '하대출처' in abc_df.columns:
+        n_master  = int((abc_df['하대출처'] == 'master').sum())
+        n_missing = int((abc_df['하대출처'] == 'missing').sum())
+    else:
+        n_master, n_missing = len(abc_df), 0
+    ws.cell(row=27, column=1, value='master');            ws.cell(row=27, column=2, value=n_master)
+    ws.cell(row=28, column=1, value='missing(환산제외)');  ws.cell(row=28, column=2, value=n_missing)
+    if n_missing:
+        c = ws.cell(row=28, column=3, value='← 하대 미등록: 팔레트/일·2슬롯·히트맵 제외됨')
+        c.font = Font(color='FFC00000', size=9)
+
+    # 중복 로케 경고
+    dup_locs = _find_duplicate_locations(abc_df)
+    ws.cell(row=30, column=1, value='-- 중복 로케 경고 --').font = Font(bold=True)
+    ws.cell(row=31, column=1, value='같은 자리 2품목 배정')
+    c = ws.cell(row=31, column=2, value=len(dup_locs))
+    if dup_locs:
+        c.font = Font(color='FFC00000', bold=True)
+        ws.cell(row=32, column=1, value='해당 로케').font = Font(size=9, color='555555')
+        ws.cell(row=32, column=2, value=', '.join(dup_locs[:10])
+                + (' ...' if len(dup_locs) > 10 else '')).font = Font(size=9)
 
     ws.column_dimensions['A'].width = 28
     ws.column_dimensions['B'].width = 12
@@ -730,18 +767,30 @@ def write_change_log(ws, abc_df, prev_master_df):
 # -------------------------------------------------------------------
 # 6. 메인
 # -------------------------------------------------------------------
-def run_analysis(monthly_dir, master_file, output_dir, log=print):
+def run_analysis(monthly_dir, master_file, output_dir, log=print, ref_ym=None):
     """
     분석 본체. GUI/CLI 공용 진입점.
     성공 시 생성된 output 파일 경로 반환.
+
+    ref_ym: 'YYYY-MM' 기준월 지정. None이면 데이터 내 최신월 자동 선택.
+            (compute_averages 가 기준월 이후 월을 윈도우에서 제외하므로
+             과거월 지정 시 그 시점 기준으로 정상 재현됨)
     """
     log('== ABC 재배치 분석 시작 ==')
 
     log('\n[1] 월별 데이터 로드')
     long_df = load_monthly_files(monthly_dir, log=log)
 
-    ref_row = long_df.sort_values(['년', '월']).iloc[-1]
-    ref_y, ref_m = int(ref_row['년']), int(ref_row['월'])
+    if ref_ym:
+        m = re.match(r'^(\d{4})-(\d{2})$', str(ref_ym).strip())
+        if not m:
+            raise AnalysisError(f'기준월 형식 오류: {ref_ym} (YYYY-MM 형식이어야 함)')
+        ref_y, ref_m = int(m.group(1)), int(m.group(2))
+        if not ((long_df['년'] == ref_y) & (long_df['월'] == ref_m)).any():
+            raise AnalysisError(f'{ref_ym} 데이터가 없습니다. 등록된 월을 확인하세요.')
+    else:
+        ref_row = long_df.sort_values(['년', '월']).iloc[-1]
+        ref_y, ref_m = int(ref_row['년']), int(ref_row['월'])
     log(f'  기준월: {ref_y}-{ref_m:02d}')
 
     unique_months = long_df.drop_duplicates(['년', '월'])[['년', '월']]
@@ -765,6 +814,15 @@ def run_analysis(monthly_dir, master_file, output_dir, log=print):
     log(f"  A={len(abc_df[abc_df['ABC']=='A'])} "
         f"B={len(abc_df[abc_df['ABC']=='B'])} "
         f"C={len(abc_df[abc_df['ABC']=='C'])}")
+
+    # 중복 로케 경고 (같은 자리에 2품목 배정 → 히트맵에서 하나가 가려짐)
+    dup_locs = _find_duplicate_locations(abc_df)
+    n_missing = int((abc_df['하대출처'] == 'missing').sum())
+    if dup_locs:
+        log(f'  [경고] 중복 로케 {len(dup_locs)}건: {", ".join(dup_locs[:10])}'
+            + (' ...' if len(dup_locs) > 10 else ''))
+    if n_missing:
+        log(f'  [경고] 하대 미등록 {n_missing}건 → 팔레트/일 환산 제외 (2슬롯·히트맵서 제외)')
 
     prev_master_df = _load_prev_master_snapshot(output_dir, ref_y, ref_m)
 

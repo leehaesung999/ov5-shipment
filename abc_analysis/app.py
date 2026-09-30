@@ -595,6 +595,7 @@ if st.button("▶ 분석 실행", type="primary", width='stretch'):
                 str(master_path),
                 str(sess / "output"),
                 log=log,
+                ref_ym=ref_ym,
             )
 
         st.success("분석 완료")
