@@ -1,13 +1,15 @@
 # -*- coding: utf-8 -*-
-"""SCM 지정출고 주간작업 — SCM팀 주간 '지정출고 요약'을 실행용 작업지시로 변환.
+"""SCM 지정출고 주간작업 — 상시 일정판.
 
-흐름:
-  1) '지정출고 요약' xlsx 업로드 → ①확인 / ②입고요청 / ③LOCK / ④해제 4그룹 분리
-  2) (선택) '로케이션별 재고조회' xlsx 업로드 → ② 입고요청 품목에 재고(로케이션·LOT) 자동 조인
-  3) 도달일자 기준 우선순위 + '이번 주 할 일' 하이라이트
-  4) 완료 체크 + 작업지시 엑셀 다운로드
+핵심: SCM팀이 주 1회 보내는 '지정출고 요약'을 올려 **누적**하고, 매일 들어와
+오늘/이번주 할 일과 종료(재고조정) 일정을 **한 타임라인**에서 확인·완료체크한다.
 
-순수 로직은 logic.py (테스트 가능). 여기는 UI 전용.
+- 주 1회: 요약 업로드 → 누적 병합(완료건은 재진행 안 함)
+- 매일: 접속 즉시 저장된 전체 일정이 날짜순으로 표시 (업로드 없이도)
+- 작업/종료가 한 일정에 섞여 그날 할 일이 모두 보임
+- 완료 체크는 영속(Supabase) → 다음날·다음주에도 유지
+
+순수 로직은 logic.py, 영속 저장은 store.py.
 """
 from __future__ import annotations
 
@@ -21,6 +23,7 @@ HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE))
 sys.path.insert(0, str(HERE.parent))
 import logic  # noqa: E402
+import store  # noqa: E402
 
 try:
     st.set_page_config(page_title="SCM 지정출고 주간작업", layout="wide")
@@ -30,115 +33,138 @@ except Exception:
 try:
     from page_help import show_help  # noqa: E402
     show_help({
-        "목적": "SCM팀 주간 '지정출고 요약'을 물류팀이 바로 실행할 수 있는 작업지시서로 변환.",
-        "필요한 파일": "① 지정출고 요약 xlsx (필수)   ② 로케이션별 재고조회 xlsx (선택 — ②입고요청 재고조인용)",
-        "사용 순서": "1. 지정출고 요약 업로드 → 4개 할 일(①확인·②입고요청·③LOCK·④해제)로 자동 분리\n"
-                     "2. 재고조회 업로드 → ②입고요청 품목에 '어디서 몇 박스 집어 보낼지' 자동 조인\n"
-                     "3. 도달일자 기준 '이번 주 할 일'부터 처리 (②입고요청은 리드타임 때문에 최우선)\n"
-                     "4. 완료 체크 후 작업지시 엑셀 다운로드",
-        "참고": "②재고 매칭은 '요약서 제조일 LOT'만 집계. 해당 LOT 재고가 없으면 ⚠️ 표시.",
+        "목적": "SCM 주간 '지정출고 요약'을 누적해, 매일 오늘 할 일·종료(재고조정) 일정을 한 눈에.",
+        "필요한 파일": "지정출고 요약 xlsx (주 1회 업로드). 재고조회 xlsx는 ②입고요청 재고조인용(선택).",
+        "일정 규칙": "② 보관창고 입고요청 → 당일(즉시)\n"
+                     "① 쿠팡 / ③ LOCK 설정 → 하프(50%)면 도달일자, 그 외는 도달−2영업일\n"
+                     "④ 지정출고 해제 → 도달일자\n"
+                     "종료일자 있는 건 → 그날 '지정출고 종료 → 재고조정' 으로 함께 표시",
+        "사용법": "1. (주1회) 요약 업로드 → 누적 반영  2. (매일) 일정 확인 + 완료 체크  3. 필요시 작업지시 엑셀 다운로드",
+        "참고": "완료 체크한 건은 다음 주 업로드 때도 완료 유지(중복 진행 방지).",
     })
 except Exception:
     pass
 
-st.title("🟨 SCM 지정출고 주간작업")
-st.caption("요약서 업로드 → 4개 할 일 분리 → 재고 자동조인 → 우선순위 → 작업지시 다운로드")
+st.title("🟨 SCM 지정출고 주간작업 — 상시 일정판")
+st.caption(f"저장: {store.backend_name()}  ·  작업+종료 한 타임라인, 날짜순. 주1회 업데이트 / 매일 확인.")
 
-c1, c2 = st.columns(2)
-with c1:
-    up_sum = st.file_uploader("① 지정출고 요약 (필수)", type=["xlsx"], key="scm_sum")
-with c2:
-    up_inv = st.file_uploader("② 로케이션별 재고조회 (선택)", type=["xlsx"], key="scm_inv")
-
-if not up_sum:
-    st.info("먼저 '지정출고 요약' 파일을 올려주세요.")
-    st.stop()
-
-try:
-    summary = logic.parse_summary(up_sum.getvalue())
-except Exception as e:
-    st.error(f"요약서 파싱 실패: {e}")
-    st.stop()
-
-if summary.empty:
-    st.warning("요약서에서 품목 행을 찾지 못했습니다.")
-    st.stop()
-
-inv = None
-if up_inv:
-    try:
-        inv = logic.parse_inventory(up_inv.getvalue())
-        whs = ", ".join(sorted(inv["창고"].dropna().unique()))
-        st.caption(f"재고 파일 로드: {len(inv):,}행 · 창고: {whs}")
-    except Exception as e:
-        st.error(f"재고 파일 파싱 실패: {e}")
-
-g1 = summary[summary["구분"].str.startswith("①")].sort_values("도달일자", na_position="last")
-g2 = summary[summary["구분"].str.startswith("②")].sort_values("도달일자", na_position="last")
-g3 = summary[summary["구분"].str.startswith("③")].sort_values("도달일자", na_position="last")
-g4 = summary[summary["구분"].str.startswith("④")].sort_values("도달일자", na_position="last")
+# ── 누적 task 로드 (상시) ──
+if "scm_tasks" not in st.session_state:
+    st.session_state.scm_tasks = store.load_tasks()
 
 today = logic._today_kst()
-this_week = summary[summary["도달일자"].apply(
-    lambda d: d is not None and 0 <= (d - today).days <= 7)]
-overdue = summary[summary["도달일자"].apply(
-    lambda d: d is not None and (d - today).days < 0)]
 
-m1, m2, m3, m4, m5 = st.columns(5)
-m1.metric("①쿠팡확인", len(g1))
-m2.metric("②입고요청", len(g2))
-m3.metric("③LOCK", len(g3))
-m4.metric("④해제", len(g4))
-m5.metric("🟠이번주 / 🔴지남", f"{len(this_week)} / {len(overdue)}")
+# ── 주간 업데이트 (요약 업로드 → 누적 병합) ──
+with st.expander("📥 주간 업데이트 — SCM '지정출고 요약' 업로드 (주 1회)",
+                 expanded=(not st.session_state.scm_tasks)):
+    up_sum = st.file_uploader("지정출고 요약 xlsx", type=["xlsx"], key="scm_sum")
+    cc1, cc2 = st.columns([1, 3])
+    if up_sum:
+        if cc1.button("➕ 누적 반영", type="primary", width="stretch"):
+            try:
+                summ = logic.parse_summary(up_sum.getvalue())
+                if summ.empty:
+                    st.warning("요약서에서 품목 행을 찾지 못했습니다.")
+                else:
+                    new = logic.summary_to_tasks(summ, today=today)
+                    merged, stat = logic.merge_tasks(st.session_state.scm_tasks, new)
+                    st.session_state.scm_tasks = merged
+                    ok = store.save_tasks(merged)
+                    st.success(
+                        f"반영됨 — 추가 {stat['추가']} · 갱신 {stat['갱신']} · 완료유지 {stat['완료유지']}"
+                        + ("" if ok else "  (⚠️ 영속저장 미설정 — 세션에만 반영)"))
+                    st.rerun()
+            except Exception as e:
+                st.error(f"파싱/반영 실패: {e}")
+    with st.popover("🗑️ 전체 초기화"):
+        st.caption("누적된 일정을 모두 지웁니다(되돌릴 수 없음).")
+        if st.button("정말 초기화", type="secondary"):
+            st.session_state.scm_tasks = []
+            store.save_tasks([])
+            st.rerun()
 
-if up_inv is None and len(g2):
-    st.warning("②입고요청 품목의 '어디서 몇 박스 집을지'를 보려면 **로케이션별 재고조회** 파일도 올려주세요.")
+tasks = st.session_state.scm_tasks
+if not tasks:
+    st.info("아직 누적된 일정이 없습니다. 위 '주간 업데이트'에서 요약 파일을 올려 시작하세요.")
+    st.stop()
+
+# ── 요약(미완료 기준) ──
+def _cnt(pred):
+    return sum(1 for t in tasks if not t.get("완료") and pred(t))
+
+
+wd_today = today.strftime("%Y%m%d")
+overdue = _cnt(lambda t: (t.get("처리예정일") or "") and t["처리예정일"] < wd_today)
+todo_today = _cnt(lambda t: t.get("처리예정일") == wd_today)
+end_cnt = _cnt(lambda t: t.get("유형") == "종료")
+done_cnt = sum(1 for t in tasks if t.get("완료"))
+
+m1, m2, m3, m4 = st.columns(4)
+m1.metric("🔴 지남(미완료)", overdue)
+m2.metric("🟠 오늘", todo_today)
+m3.metric("🔚 종료(재고조정)", end_cnt)
+m4.metric("✅ 완료", done_cnt)
 
 st.divider()
 
-view2 = logic.join_move_stock(g2, inv) if len(g2) else pd.DataFrame()
-view1 = logic.simple_view(g1) if len(g1) else pd.DataFrame()
-view3 = logic.simple_view(g3) if len(g3) else pd.DataFrame()
-view4 = logic.simple_view(g4) if len(g4) else pd.DataFrame()
-
-
-def _editor(df, key):
-    return st.data_editor(
-        df, hide_index=True, width="stretch",
-        disabled=[c for c in df.columns if c != "완료"], key=key,
+# ── 통합 일정 (상시, 날짜순) ──
+show_done = st.checkbox("완료 포함 보기", value=False)
+sch = logic.schedule_df(tasks, today=today, include_done=show_done)
+if sch.empty:
+    st.success("미완료 일정이 없습니다. 👍 (완료 포함 보기로 지난 건 확인)")
+else:
+    st.markdown("**📅 통합 일정** — 완료 체크하면 저장되어 다음에도 유지됩니다.")
+    edited = st.data_editor(
+        sch, hide_index=True, width="stretch",
+        disabled=[c for c in sch.columns if c != "완료"],
+        column_config={"_key": None},
+        key="scm_sched_ed",
     )
+    # 완료 동기화 → 저장
+    done_map = {r["_key"]: bool(r["완료"]) for _, r in edited.iterrows()}
+    changed = False
+    for t in tasks:
+        k = t.get("key")
+        if k in done_map and bool(t.get("완료")) != done_map[k]:
+            t["완료"] = done_map[k]
+            changed = True
+    if changed:
+        store.save_tasks(tasks)
+        st.session_state.scm_tasks = tasks
+        st.rerun()
 
-
-t2, t3, t4, t1 = st.tabs([
-    f"② 입고요청(물품이동) · {len(g2)}",
-    f"③ LOCK 설정 · {len(g3)}",
-    f"④ LOCK 해제 · {len(g4)}",
-    f"① 쿠팡 확인 · {len(g1)}",
-])
-with t2:
-    st.markdown("**가장 급함** — 3PL 입고 리드타임(2~3일) 때문에 주초에 먼저 처리하세요.")
-    _editor(view2, "ed2") if not view2.empty else st.info("②입고요청 항목이 없습니다.")
-with t3:
-    st.markdown("**WMS에서 지정출고 LOCK 설정** — 도달일자 임박 순.")
-    _editor(view3, "ed3") if not view3.empty else st.info("③LOCK 항목이 없습니다.")
-with t4:
-    st.markdown("**WMS에서 지정출고 LOCK 해제**.")
-    _editor(view4, "ed4") if not view4.empty else st.info("④해제 항목이 없습니다.")
-with t1:
-    st.markdown("**쿠팡 담당자에게 회신 요청 메일** 발송 대상.")
-    _editor(view1, "ed1") if not view1.empty else st.info("①쿠팡 확인 항목이 없습니다.")
-
+# ── (선택) ② 입고요청 재고 LOT 조인 ──
 st.divider()
-xls = logic.build_xlsx({
-    "②입고요청(물품이동)": view2,
-    "③LOCK설정": view3,
-    "④LOCK해제": view4,
-    "①쿠팡확인": view1,
-})
-st.download_button(
-    "⬇️ 작업지시서 엑셀 다운로드",
-    data=xls,
-    file_name=f"지정출고_작업지시_{today.strftime('%Y%m%d')}.xlsx",
-    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-    type="primary",
-)
+with st.expander("📦 ② 보관창고 입고요청 — 재고 LOT 조인 (로케이션별 재고조회 업로드 시)"):
+    up_inv = st.file_uploader("로케이션별 재고조회 xlsx", type=["xlsx"], key="scm_inv")
+    g2_tasks = [t for t in tasks if t.get("유형") == "작업"
+                and str(t.get("구분", "")).startswith("②") and not t.get("완료")]
+    if not g2_tasks:
+        st.info("미완료 ②입고요청 항목이 없습니다.")
+    elif up_inv is None:
+        st.caption("재고조회 파일을 올리면 '어디서 몇 박스 집어 보낼지'를 보여줍니다.")
+    else:
+        try:
+            inv = logic.parse_inventory(up_inv.getvalue())
+            g2df = pd.DataFrame([{
+                "품목코드": t["품목코드"], "품목명": t["품목명"], "보관창고": t["보관창고"],
+                "제조일자": t["제조일자"], "요청Box": t["요청Box"],
+                "도달일자": logic._parse_d8(t["도달일자"]), "종료일자": logic._parse_d8(t["종료일자"]),
+                "처리사유": t["처리사유"],
+            } for t in g2_tasks])
+            view2 = logic.join_move_stock(g2df, inv)
+            st.dataframe(view2, hide_index=True, width="stretch")
+        except Exception as e:
+            st.error(f"재고 조인 실패: {e}")
+
+# ── 작업지시 엑셀 다운로드 (현재 미완료 일정) ──
+st.divider()
+dl = logic.schedule_df(tasks, today=today, include_done=False)
+if not dl.empty:
+    xls = logic.build_xlsx({"통합일정": dl.drop(columns=["_key"])})
+    st.download_button(
+        "⬇️ 작업지시(통합일정) 엑셀 다운로드",
+        data=xls,
+        file_name=f"지정출고_일정_{today.strftime('%Y%m%d')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )

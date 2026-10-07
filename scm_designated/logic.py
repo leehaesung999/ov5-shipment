@@ -9,6 +9,7 @@ from __future__ import annotations
 import io
 import re
 import sys
+from datetime import date, timedelta
 from pathlib import Path
 
 import pandas as pd
@@ -176,6 +177,173 @@ def priority_label(reach_date) -> str:
     if d <= 14:
         return f"🟡 D-{d}"
     return f"D-{d}"
+
+
+# ---------------- 처리예정일 · 누적/병합 · 통합일정 ----------------
+def _is_half(track) -> bool:
+    """기준트랙이 하프(50%)인가. '하프' 또는 '50' 포함."""
+    t = str(track or "")
+    return ("하프" in t) or ("50" in t)
+
+
+def _biz_days_before(d, n=2):
+    """d 기준 n 영업일 전(주말·공휴일 제외). holidays 라이브러리 없으면 주말만 제외."""
+    if d is None:
+        return None
+    try:
+        import holidays as _h
+        kr = _h.KR()
+    except Exception:
+        kr = None
+    cur = d
+    cnt = 0
+    while cnt < n:
+        cur = cur - timedelta(days=1)
+        if cur.weekday() < 5 and (kr is None or cur not in kr):
+            cnt += 1
+    return cur
+
+
+def _gubun_mark(gubun) -> str:
+    s = str(gubun or "").strip()
+    for m in ("①", "②", "③", "④"):
+        if s.startswith(m):
+            return m
+    return ""
+
+
+def work_date(gubun, track, reach, end, today=None):
+    """구분별 처리예정일(작업일자).
+    ② 보관창고 입고요청 → 즉시(today, 3PL 리드타임)
+    ①③ → 하프(50%)면 도달일자 당일, 아니면 도달−2영업일
+    ④ 지정출고 해제 → 종료일자(그 시점에 재고 조정)"""
+    today = today or _today_kst()
+    m = _gubun_mark(gubun)
+    if m == "②":
+        return today
+    if m == "④":
+        return end
+    if reach is None:
+        return None
+    return reach if _is_half(track) else _biz_days_before(reach, 2)
+
+
+def _d8(d):
+    return d.strftime("%Y%m%d") if hasattr(d, "strftime") else (str(d) if d else "")
+
+
+def _parse_d8(s):
+    s = str(s or "")
+    if len(s) == 8 and s.isdigit():
+        return date(int(s[:4]), int(s[4:6]), int(s[6:8]))
+    return None
+
+
+def task_key(code, partners, when, gubun, kind="작업"):
+    """중복판정 키 = 품목코드 + 거래처 + 해당일자 + 구분 + 유형(작업/종료)."""
+    return f"{_clean_code(code)}|{_norm(partners)}|{_d8(when)}|{_gubun_mark(gubun)}|{kind}"
+
+
+def _mk_task(it, kind, when, upload_ymd):
+    return {
+        "key": task_key(it["품목코드"], it["거래처"], when, it["구분"], kind),
+        "유형": kind,
+        "구분": it["구분"], "품목코드": it["품목코드"], "품목명": it["품목명"],
+        "기준트랙": it["기준트랙"], "제조일자": it["제조일자"], "소비기한": it["소비기한"],
+        "도달일자": _d8(it["도달일자"]), "종료일자": _d8(it["종료일자"]), "처리예정일": _d8(when),
+        "거래처": it["거래처"], "보관창고": it["보관창고"], "처리사유": it["처리사유"],
+        "가용Box": (None if pd.isna(it["가용Box"]) else it["가용Box"]),
+        "요청Box": (None if pd.isna(it["요청Box"]) else it["요청Box"]),
+        "등록주차": upload_ymd, "완료": False,
+    }
+
+
+def summary_to_tasks(summary_df, upload_ymd=None, today=None):
+    """파싱된 요약 DF → 누적/영속용 task dict 리스트.
+    한 품목이 ①작업 일정 + (종료일자 있으면) ②종료 일정을 '같은 리스트'에 올린다
+    → 날짜순 정렬 시 작업·종료가 한 타임라인에 섞여 그날 할 일이 모두 보인다."""
+    today = today or _today_kst()
+    upload_ymd = upload_ymd or today.strftime("%Y%m%d")
+    tasks = []
+    for _, it in summary_df.iterrows():
+        reach, end = it["도달일자"], it["종료일자"]
+        # (1) 작업 일정: ②=오늘, ①③=하프도달/도달−2영업일, ④=도달일자
+        wd = work_date(it["구분"], it["기준트랙"], reach, end, today)
+        tasks.append(_mk_task(it, "작업", wd, upload_ymd))
+        # (2) 종료 일정: 종료일자가 있으면 그날 '지정출고 종료 → 재고조정'
+        if end is not None:
+            tasks.append(_mk_task(it, "종료", end, upload_ymd))
+    return tasks
+
+
+def merge_tasks(existing, new):
+    """누적 병합: 같은 key가 이미 완료면 완료 유지(재진행 방지), 미완료면 내용 갱신, 새 key는 추가.
+    반환: (병합리스트, 통계dict)."""
+    by_key = {t["key"]: dict(t) for t in (existing or [])}
+    added = updated = kept_done = 0
+    for t in new:
+        k = t["key"]
+        if k in by_key:
+            if by_key[k].get("완료"):
+                kept_done += 1          # 완료건은 재진행 안 함
+                continue
+            by_key[k] = dict(t)         # 내용 갱신(완료는 False 유지)
+            updated += 1
+        else:
+            by_key[k] = dict(t)
+            added += 1
+    return list(by_key.values()), {"추가": added, "갱신": updated, "완료유지": kept_done}
+
+
+def sched_label(wd, today=None):
+    if wd is None:
+        return ""
+    today = today or _today_kst()
+    d = (wd - today).days
+    if d < 0:
+        return f"🔴 지남 ({-d}일)"
+    if d == 0:
+        return "🟠 오늘"
+    if d <= 7:
+        return f"🟠 D-{d}"
+    if d <= 14:
+        return f"🟡 D-{d}"
+    return f"D-{d}"
+
+
+def schedule_df(tasks, today=None, include_done=True):
+    """누적 task → 처리예정일 순 통합 일정 DF(미완료 먼저 · 빠른 예정일 순)."""
+    today = today or _today_kst()
+    rows = []
+    for t in (tasks or []):
+        if not include_done and t.get("완료"):
+            continue
+        wd = _parse_d8(t.get("처리예정일"))
+        kind = t.get("유형", "작업")
+        할일 = ("🔚 지정출고 종료 → 재고조정" if kind == "종료" else t.get("구분", ""))
+        rows.append({
+            "완료": bool(t.get("완료")),
+            "일정": sched_label(wd, today),
+            "처리예정일": _md(wd) if wd else "",
+            "유형": kind,
+            "할일": 할일,
+            "구분": t.get("구분", ""),
+            "품목코드": t.get("품목코드", ""),
+            "품목명": t.get("품목명", ""),
+            "거래처": t.get("거래처", ""),
+            "보관창고": t.get("보관창고", ""),
+            "도달일자": _md(_parse_d8(t.get("도달일자"))),
+            "종료일자": _md(_parse_d8(t.get("종료일자"))),
+            "기준트랙": t.get("기준트랙", ""),
+            "처리사유": t.get("처리사유", ""),
+            "_wd": t.get("처리예정일") or "99999999",
+            "_key": t.get("key", ""),
+        })
+    df = pd.DataFrame(rows)
+    if df.empty:
+        return df
+    df = df.sort_values(by=["완료", "_wd", "구분"], ascending=[True, True, True])
+    return df.drop(columns=["_wd"]).reset_index(drop=True)
 
 
 # ---------------- ② 재고 조인 ----------------
