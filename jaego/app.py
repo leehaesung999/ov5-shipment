@@ -416,10 +416,12 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str, scope: str = "미
         exp = to_exp_str(row.iloc[COL_유통기한])
         if exp is None:
             continue
-        e = exp_info.setdefault(exp, {"has_lock_free": False, "in_출고": False,
-                                      "qty": 0.0, "avail": 0.0})
-        if not has_qty(row.iloc[COL_LOCK]):
-            e["has_lock_free"] = True
+        e = exp_info.setdefault(exp, {"has_lock_free": False, "has_lock": False,
+                                      "in_출고": False, "qty": 0.0, "avail": 0.0})
+        if has_qty(row.iloc[COL_LOCK]):
+            e["has_lock"] = True        # 락 걸린 재고 있음
+        else:
+            e["has_lock_free"] = True   # 락 안 걸린 재고 있음
         if has_qty(row.iloc[COL_출고예정]):
             e["in_출고"] = True
         e["qty"]   += _to_num(row.iloc[COL_현재고Box])
@@ -444,23 +446,29 @@ def analyze_item(df: pd.DataFrame, code: str, target_exp: str, scope: str = "미
     _pre = f"등록 {target_exp} 없음 → {eff_exp}로 판정 · " if 대체 else ""
     입고 = (f"🔁 대체입고({eff_exp})" if 대체
             else ("✅ 입고" if t["qty"] > 0 else "✅ 입고(현재고 0)"))
-    has_free = t["has_lock_free"]           # 락 안 걸린(출고가능) 재고 존재 여부
-    락누락 = False
-    if scope == "전량":
-        if has_free:
-            락, 락누락 = "🔴 락 누락 의심 (전량인데 미락 재고 있음)", True
-        else:
-            락 = "🔒 전량 락 (정상)"
-    elif scope == "부분":
-        락 = "🔓 부분 (락 해제분 정상)" if has_free else "🔒 전량 락"
-    else:  # 미지정 — 구분 등록 안 됨
-        락 = "🔒 전량 락" if not has_free else "🔓 락 일부해제"
-
     idx         = all_exps.index(eff_exp)
     before_exps = all_exps[:idx]
     after_exps  = all_exps[idx + 1:]
     직전        = before_exps[-1] if before_exps else None
     이후_출고   = [e for e in after_exps if exp_info[e]["in_출고"]]
+    뒤로트_입고 = any(exp_info[e]["qty"] > 0 for e in after_exps)  # 후(늦은) 유통기한 로트 입고됨
+
+    has_free = t["has_lock_free"]           # 락 안 걸린(출고가능) 재고 존재 여부
+    락누락 = False
+    if scope == "전량":
+        # 전량 리뉴얼: 해당 로트에 락 안 걸린(미락) 재고가 있으면 경고
+        if has_free:
+            락, 락누락 = "🔴 락 누락 의심 (전량인데 미락 재고 있음)", True
+        else:
+            락 = "🔒 전량 락 (정상)"
+    elif scope == "부분":
+        # 부분 리뉴얼: 후(늦은) 유통기한 로트가 입고됐는데 해당 로트에 락이 하나도 없으면 경고
+        if 뒤로트_입고 and t["qty"] > 0 and not t["has_lock"]:
+            락, 락누락 = "🔴 락 누락 (부분 · 뒤 유통기한 입고됐는데 해당 로트 락 없음)", True
+        else:
+            락 = "🔓 부분 (락 해제분 정상)" if has_free else "🔒 전량 락"
+    else:  # 미지정 — 구분 등록 안 됨
+        락 = "🔒 전량 락" if not has_free else "🔓 락 일부해제"
 
     # 지금 나갈 수 있는 재고: 빠른 유통기한 가용 + 동일(실질) 유통기한 락 안 걸린 가용
     선입가용 = sum(exp_info[e]["avail"] for e in before_exps)
